@@ -42,7 +42,11 @@ save() {
   local tmp
   tmp="$(mktemp "$SHEETHUB_HOME/.hub.XXXXXX")"
   cat > "$tmp"
-  mv "$tmp" "$STORE"
+  if [ -s "$tmp" ] && jq -e . "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$STORE"
+  else
+    rm -f "$tmp"; echo "sheethub: refusing to write empty/invalid store (change aborted)" >&2; return 1
+  fi
 }
 
 repo_exists() {
