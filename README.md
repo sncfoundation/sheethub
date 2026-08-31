@@ -9,11 +9,46 @@ A <a href="https://sncfoundation.github.io">Sheet-Native Computing Foundation</a
 
 ---
 
-**Status:** 📝 Unsaved Draft &#183; this project is a proposal. Design notes and contributions are welcome.
+**Status:** 💾 Autosaving &#183; a working prototype of the forge **metadata layer** — repos, issues and merge requests over a local CLI. Design notes and contributions are welcome.
 
 ## About
 
-An all-in-one DevOps forge in one workbook Part of the spreadsheet-native stack — the Sheet stays the source of truth, and it reconciles.
+An all-in-one DevOps forge in one workbook. Part of the spreadsheet-native stack — the
+Sheet stays the source of truth, and it reconciles.
+
+## Usage
+
+`sheethub` is a single bash script. It needs `bash` and `jq`.
+
+```bash
+# repos
+sheethub repo create webapp --desc "our main app"
+sheethub repo list
+
+# issues (sequential ids per repo)
+sheethub issue create webapp "Login button misaligned" --body "on mobile"
+sheethub issue list webapp                 # open by default
+sheethub issue list webapp --state all     # open|closed|all
+sheethub issue close webapp 1
+
+# merge requests
+sheethub mr create webapp "Fix login layout" --from fix/login --to main
+sheethub mr list webapp
+
+# a GitLab-style overview
+sheethub stats
+```
+
+Every entity gets a **sequential id per repo** (issue `#1`, MR `!1`, …).
+
+## Where state lives
+
+State is stored in a single JSON file at `${SHEETHUB_HOME:-~/.sheethub}/hub.json`.
+
+For this MVP that **JSON store stands in for the spreadsheet tabs**: its top-level keys —
+`repos`, `issues`, `mrs` — are the tabs a real SheetHub workbook would keep. The
+metadata layer is real and working; the **real git-transport** (pushing and pulling actual
+code through the Sheet) is a **stretch goal**.
 
 ## Get involved
 

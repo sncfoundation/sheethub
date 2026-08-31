@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+#
+# SheetHub — a GitLab-style DevOps forge whose data plane is a spreadsheet.
+# This CLI is the forge metadata layer: repos, issues and merge requests.
+#
+# For this MVP the "spreadsheet" is a single JSON file — hub.json — where each
+# top-level key stands in for a spreadsheet tab (repos / issues / mrs). The real
+# git-transport (push/pull over the Sheet) is a stretch goal; here we model the
+# metadata a forge keeps around the code.
+#
+#   sheethub repo create <name> [--desc "..."]
+#   sheethub repo list
+#   sheethub issue create <repo> "<title>" [--body "..."]
+#   sheethub issue list <repo> [--state open|closed|all]
+#   sheethub issue close <repo> <id>
+#   sheethub mr create <repo> "<title>" --from <branch> --to <branch>
+#   sheethub mr list <repo>
+#   sheethub stats
+#
+# State lives in ${SHEETHUB_HOME:-~/.sheethub}/hub.json. Requires: bash, jq.
+set -euo pipefail
+
+SHEETHUB_HOME="${SHEETHUB_HOME:-$HOME/.sheethub}"
+STORE="$SHEETHUB_HOME/hub.json"
+
+command -v jq >/dev/null 2>&1 || { echo "sheethub: jq not found (install jq)" >&2; exit 1; }
+
+die() { echo "sheethub: $*" >&2; exit 1; }
+
+# ---- store helpers ---------------------------------------------------------
+
+# Ensure the store exists with the three "tabs".
+init_store() {
+  mkdir -p "$SHEETHUB_HOME"
+  if [ ! -f "$STORE" ]; then
+    echo '{"repos":[],"issues":[],"mrs":[]}' > "$STORE"
+  fi
+}
+
+# Atomically write stdin as the new store.
+save() {
+  local tmp
+  tmp="$(mktemp "$SHEETHUB_HOME/.hub.XXXXXX")"
+  cat > "$tmp"
+  mv "$tmp" "$STORE"
+}
+
+repo_exists() {
+  jq -e --arg n "$1" '.repos[] | select(.name==$n)' "$STORE" >/dev/null 2>&1
+}
+
+# Next sequential id for an entity ("issues"|"mrs") within a repo.
+next_id() {
+  local kind="$1" repo="$2"
+  jq --arg k "$kind" --arg r "$repo" \
+    '[.[$k][] | select(.repo==$r) | .id] | (max // 0) + 1' "$STORE"
+}
+
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# ---- repo ------------------------------------------------------------------
+
+repo_create() {
+  local name="" desc=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --desc) desc="${2:-}"; shift 2 ;;
+      --desc=*) desc="${1#--desc=}"; shift ;;
+      -*) die "repo create: unknown flag '$1'" ;;
+      *) [ -z "$name" ] && name="$1" || die "repo create: unexpected arg '$1'"; shift ;;
+    esac
+  done
+  [ -n "$name" ] || die "usage: sheethub repo create <name> [--desc \"...\"]"
+  repo_exists "$name" && die "repo '$name' already exists"
+  jq --arg n "$name" --arg d "$desc" --arg t "$(now)" \
+    '.repos += [{name:$n, desc:$d, created:$t}]' "$STORE" | save
+  echo "created repo '$name'"
+}
+
+repo_list() {
+  local n
+  n="$(jq '.repos | length' "$STORE")"
+  if [ "$n" -eq 0 ]; then echo "no repos yet"; return; fi
+  jq -r '.repos[] | "\(.name)\t\(.desc)"' "$STORE" | \
+    while IFS=$'\t' read -r name desc; do
+      if [ -n "$desc" ]; then printf '%-24s %s\n' "$name" "$desc"; else printf '%s\n' "$name"; fi
+    done
+}
+
+# ---- issue -----------------------------------------------------------------
+
+issue_create() {
+  local repo="" title="" body=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --body) body="${2:-}"; shift 2 ;;
+      --body=*) body="${1#--body=}"; shift ;;
+      -*) die "issue create: unknown flag '$1'" ;;
+      *)
+        if [ -z "$repo" ]; then repo="$1"
+        elif [ -z "$title" ]; then title="$1"
+        else die "issue create: unexpected arg '$1'"; fi
+        shift ;;
+    esac
+  done
+  [ -n "$repo" ] && [ -n "$title" ] || die "usage: sheethub issue create <repo> \"<title>\" [--body \"...\"]"
+  repo_exists "$repo" || die "no such repo '$repo'"
+  local id; id="$(next_id issues "$repo")"
+  jq --arg r "$repo" --argjson id "$id" --arg ti "$title" --arg b "$body" --arg t "$(now)" \
+    '.issues += [{repo:$r, id:$id, title:$ti, body:$b, state:"open", created:$t}]' "$STORE" | save
+  echo "created issue #$id in '$repo': $title"
+}
+
+issue_list() {
+  local repo="" state="open"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --state) state="${2:-}"; shift 2 ;;
+      --state=*) state="${1#--state=}"; shift ;;
+      -*) die "issue list: unknown flag '$1'" ;;
+      *) [ -z "$repo" ] && repo="$1" || die "issue list: unexpected arg '$1'"; shift ;;
+    esac
+  done
+  [ -n "$repo" ] || die "usage: sheethub issue list <repo> [--state open|closed|all]"
+  repo_exists "$repo" || die "no such repo '$repo'"
+  case "$state" in open|closed|all) ;; *) die "issue list: --state must be open|closed|all" ;; esac
+  local rows
+  rows="$(jq -r --arg r "$repo" --arg s "$state" \
+    '.issues[] | select(.repo==$r) | select($s=="all" or .state==$s)
+     | "#\(.id)\t[\(.state)]\t\(.title)"' "$STORE")"
+  if [ -z "$rows" ]; then echo "no $state issues in '$repo'"; return; fi
+  printf '%s\n' "$rows" | while IFS=$'\t' read -r id st title; do
+    printf '%-5s %-9s %s\n' "$id" "$st" "$title"
+  done
+}
+
+issue_close() {
+  local repo="${1:-}" id="${2:-}"
+  [ -n "$repo" ] && [ -n "$id" ] || die "usage: sheethub issue close <repo> <id>"
+  repo_exists "$repo" || die "no such repo '$repo'"
+  jq -e --arg r "$repo" --argjson id "$id" \
+    '.issues[] | select(.repo==$r and .id==$id)' "$STORE" >/dev/null 2>&1 \
+    || die "no issue #$id in '$repo'"
+  jq --arg r "$repo" --argjson id "$id" --arg t "$(now)" \
+    '(.issues[] | select(.repo==$r and .id==$id) | .state) = "closed"
+     | (.issues[] | select(.repo==$r and .id==$id) | .closed) = $t' "$STORE" | save
+  echo "closed issue #$id in '$repo'"
+}
+
+# ---- merge request ---------------------------------------------------------
+
+mr_create() {
+  local repo="" title="" from="" to=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from) from="${2:-}"; shift 2 ;;
+      --from=*) from="${1#--from=}"; shift ;;
+      --to) to="${2:-}"; shift 2 ;;
+      --to=*) to="${1#--to=}"; shift ;;
+      -*) die "mr create: unknown flag '$1'" ;;
+      *)
+        if [ -z "$repo" ]; then repo="$1"
+        elif [ -z "$title" ]; then title="$1"
+        else die "mr create: unexpected arg '$1'"; fi
+        shift ;;
+    esac
+  done
+  [ -n "$repo" ] && [ -n "$title" ] && [ -n "$from" ] && [ -n "$to" ] \
+    || die "usage: sheethub mr create <repo> \"<title>\" --from <branch> --to <branch>"
+  repo_exists "$repo" || die "no such repo '$repo'"
+  local id; id="$(next_id mrs "$repo")"
+  jq --arg r "$repo" --argjson id "$id" --arg ti "$title" --arg f "$from" --arg to "$to" --arg t "$(now)" \
+    '.mrs += [{repo:$r, id:$id, title:$ti, from:$f, to:$to, state:"open", created:$t}]' "$STORE" | save
+  echo "created MR !$id in '$repo': $title ($from -> $to)"
+}
+
+mr_list() {
+  local repo="${1:-}"
+  [ -n "$repo" ] || die "usage: sheethub mr list <repo>"
+  repo_exists "$repo" || die "no such repo '$repo'"
+  local rows
+  rows="$(jq -r --arg r "$repo" \
+    '.mrs[] | select(.repo==$r) | "!\(.id)\t[\(.state)]\t\(.from) -> \(.to)\t\(.title)"' "$STORE")"
+  if [ -z "$rows" ]; then echo "no merge requests in '$repo'"; return; fi
+  printf '%s\n' "$rows" | while IFS=$'\t' read -r id st branches title; do
+    printf '%-5s %-9s %-24s %s\n' "$id" "$st" "$branches" "$title"
+  done
+}
+
+# ---- stats -----------------------------------------------------------------
+
+stats() {
+  jq -r '
+    "repos:        \(.repos | length)",
+    "issues:       \(.issues | length) (\([.issues[]|select(.state=="open")]|length) open, \([.issues[]|select(.state=="closed")]|length) closed)",
+    "mrs:          \(.mrs | length)"
+  ' "$STORE"
+}
+
+# ---- dispatch --------------------------------------------------------------
+
+usage() {
+  cat >&2 <<'EOF'
+sheethub — a spreadsheet-native DevOps forge (metadata layer)
+
+  sheethub repo create <name> [--desc "..."]
+  sheethub repo list
+  sheethub issue create <repo> "<title>" [--body "..."]
+  sheethub issue list <repo> [--state open|closed|all]
+  sheethub issue close <repo> <id>
+  sheethub mr create <repo> "<title>" --from <branch> --to <branch>
+  sheethub mr list <repo>
+  sheethub stats
+
+State: ${SHEETHUB_HOME:-~/.sheethub}/hub.json  (JSON keys stand in for spreadsheet tabs)
+EOF
+  exit 1
+}
+
+init_store
+
+group="${1:-}"; shift || true
+case "$group" in
+  repo)
+    sub="${1:-}"; shift || true
+    case "$sub" in
+      create) repo_create "$@" ;;
+      list)   repo_list "$@" ;;
+      *) usage ;;
+    esac ;;
+  issue)
+    sub="${1:-}"; shift || true
+    case "$sub" in
+      create) issue_create "$@" ;;
+      list)   issue_list "$@" ;;
+      close)  issue_close "$@" ;;
+      *) usage ;;
+    esac ;;
+  mr)
+    sub="${1:-}"; shift || true
+    case "$sub" in
+      create) mr_create "$@" ;;
+      list)   mr_list "$@" ;;
+      *) usage ;;
+    esac ;;
+  stats) stats ;;
+  ""|-h|--help|help) usage ;;
+  *) usage ;;
+esac
