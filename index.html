@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SheetHub — DevOps Forge on a Spreadsheet</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --card-hover: #1c2128;
+      --border: #30363d;
+      --border-muted: #21262d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --text-dim: #6e7681;
+      --primary: #8957e5;
+      --primary-hover: #a371f7;
+      --primary-bg: rgba(137, 87, 229, 0.15);
+      --success: #238636;
+      --success-text: #3fb950;
+      --success-bg: rgba(46, 160, 67, 0.15);
+      --open-color: #3fb950;
+      --closed-color: #a371f7;
+      --merged-color: #8957e5;
+      --accent: #58a6ff;
+      --accent-bg: rgba(88, 166, 255, 0.12);
+      --danger: #f85149;
+      --danger-bg: rgba(248, 81, 73, 0.15);
+      --warning: #d29922;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', SFMono-Regular, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Navigation */
+    header {
+      background-color: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: var(--text);
+      font-weight: 700;
+      font-size: 1.15rem;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, #fc6d26, #e24329);
+      color: #fff;
+      font-size: 0.7rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 9999px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .top-meta {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .sncf-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      background: var(--border-muted);
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    .sncf-badge strong { color: var(--text); }
+
+    /* Main Container */
+    .container {
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem;
+      flex: 1;
+    }
+
+    /* Repo Header Banner */
+    .repo-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .repo-title-area {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .repo-title {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 1.35rem;
+      font-weight: 700;
+    }
+
+    .repo-select {
+      background-color: var(--card-bg);
+      color: var(--accent);
+      border: 1px solid var(--border);
+      font-size: 1.15rem;
+      font-weight: 700;
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .visibility-pill {
+      font-size: 0.75rem;
+      padding: 0.1rem 0.5rem;
+      border-radius: 9999px;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .repo-desc {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    .repo-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background-color: var(--card-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.45rem 0.9rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+
+    .btn:hover {
+      background-color: var(--card-hover);
+      border-color: #8b949e;
+    }
+
+    .btn-primary {
+      background-color: var(--success);
+      border-color: rgba(240, 246, 252, 0.1);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background-color: #2ea043;
+    }
+
+    .btn-purple {
+      background-color: var(--primary);
+      border-color: rgba(240, 246, 252, 0.1);
+      color: #fff;
+    }
+
+    .btn-purple:hover {
+      background-color: var(--primary-hover);
+    }
+
+    /* Forge Tabs Navigation */
+    .nav-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      overflow-x: auto;
+    }
+
+    .tab-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.65rem 1rem;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 0.15s ease, border-color 0.15s ease;
+      font-family: inherit;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+      border-color: var(--text-dim);
+    }
+
+    .tab-btn.active {
+      color: var(--text);
+      border-color: #f78166;
+    }
+
+    .tab-count {
+      background-color: var(--border-muted);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
+    /* Content Panes */
+    .tab-pane {
+      display: none;
+    }
+
+    .tab-pane.active {
+      display: block;
+    }
+
+    /* Cards & Containers */
+    .card {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-header {
+      background-color: #161b22;
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .card-body {
+      padding: 1rem;
+    }
+
+    /* File Explorer / Code View */
+    .file-tree-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid var(--border-muted);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .file-tree-row:last-child { border-bottom: none; }
+    .file-tree-row:hover { background-color: var(--card-hover); }
+
+    .file-name {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--accent);
+    }
+
+    .file-meta { color: var(--text-muted); font-size: 0.8rem; }
+
+    .code-viewer {
+      background-color: #0d1117;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+    }
+
+    .code-line {
+      display: flex;
+      line-height: 1.5;
+    }
+
+    .code-line-no {
+      width: 45px;
+      text-align: right;
+      padding-right: 1rem;
+      color: var(--text-dim);
+      user-select: none;
+      background-color: #12161c;
+      border-right: 1px solid var(--border-muted);
+    }
+
+    .code-line-content {
+      padding: 0 1rem;
+      color: #e6edf3;
+      white-space: pre;
+    }
+
+    /* List Items (Issues, MRs, Releases) */
+    .list-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 0.9rem 1rem;
+      border-bottom: 1px solid var(--border-muted);
+      transition: background 0.15s ease;
+      gap: 1rem;
+    }
+
+    .list-item:last-child { border-bottom: none; }
+    .list-item:hover { background-color: var(--card-hover); }
+
+    .list-item-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      flex: 1;
+    }
+
+    .icon-open { color: var(--open-color); }
+    .icon-closed { color: var(--closed-color); }
+    .icon-merged { color: var(--merged-color); }
+
+    .item-title-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .item-title {
+      font-weight: 600;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+
+    .item-title:hover { color: var(--accent); }
+
+    .item-subtext {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      margin-top: 0.25rem;
+    }
+
+    .pill-label {
+      font-size: 0.7rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 9999px;
+      font-weight: 600;
+      background-color: rgba(137, 87, 229, 0.18);
+      color: #d2a8ff;
+      border: 1px solid rgba(137, 87, 229, 0.4);
+    }
+
+    .branch-tag {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      background: var(--border-muted);
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--accent);
+    }
+
+    /* Diff View */
+    .diff-container {
+      margin-top: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+    }
+
+    .diff-header {
+      background-color: #1c2128;
+      padding: 0.5rem 1rem;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .diff-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background-color: #0d1117;
+    }
+
+    @media (max-width: 768px) {
+      .diff-grid { grid-template-columns: 1fr; }
+    }
+
+    .diff-col {
+      padding: 0.75rem;
+      overflow-x: auto;
+      border-right: 1px solid var(--border-muted);
+    }
+
+    .diff-col:last-child { border-right: none; }
+    .diff-col-title {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .diff-added { background-color: rgba(46, 160, 67, 0.2); color: #7ee787; padding: 0.5rem; border-radius: 4px; }
+    .diff-removed { background-color: rgba(248, 81, 73, 0.2); color: #ffa198; padding: 0.5rem; border-radius: 4px; }
+
+    /* Modal / Drawer */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+
+    .modal-backdrop.open { display: flex; }
+
+    .modal-box {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      max-width: 850px;
+      width: 100%;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #1c2128;
+    }
+
+    .modal-body {
+      padding: 1.25rem;
+      overflow-y: auto;
+    }
+
+    .modal-footer {
+      padding: 0.75rem 1.25rem;
+      border-top: 1px solid var(--border);
+      background: #1c2128;
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.6rem;
+    }
+
+    /* Discussion Thread in Modal */
+    .comment-box {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-top: 1rem;
+      overflow: hidden;
+    }
+
+    .comment-header {
+      background: #161b22;
+      padding: 0.5rem 0.8rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .comment-body {
+      padding: 0.8rem;
+      font-size: 0.9rem;
+    }
+
+    /* Spreadsheet Grid Preview */
+    .sheet-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+    }
+
+    .sheet-table th, .sheet-table td {
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+    }
+
+    .sheet-table th {
+      background: #1c2128;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .sheet-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 1.5rem;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-top: auto;
+    }
+
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header>
+    <a href="#" class="brand">
+      <span>🦊</span>
+      <span>SheetHub</span>
+      <span class="brand-badge">SNCF FORGE</span>
+    </a>
+    <div class="top-meta">
+      <div class="sncf-badge">
+        <span>💩</span>
+        <span>Data plane: <strong>Google Sheet</strong></span>
+      </div>
+      <button class="btn" id="btn-sync-sheet">⟳ Sync Sheet</button>
+    </div>
+  </header>
+
+  <!-- Main Forge View -->
+  <main class="container">
+
+    <!-- Repo Header -->
+    <div class="repo-header">
+      <div class="repo-title-area">
+        <div class="repo-title">
+          <span>📦</span>
+          <select id="repo-select-picker" class="repo-select">
+            <option value="sncf/hello-web">sncf / hello-web</option>
+            <option value="sncf/sheeternetes-manifests">sncf / sheeternetes-manifests</option>
+          </select>
+          <span class="visibility-pill">Public</span>
+        </div>
+        <p class="repo-desc" id="repo-desc-heading">Reference 3-tier microservice manifest for Sheeternetes</p>
+      </div>
+      <div class="repo-actions">
+        <button class="btn" id="btn-star">⭐ Star <span id="star-count">12</span></button>
+        <button class="btn btn-purple" id="btn-open-new-mr">+ New Merge Request</button>
+      </div>
+    </div>
+
+    <!-- Forge Tabs -->
+    <div class="nav-tabs">
+      <button class="tab-btn active" data-tab="code">
+        📁 Code
+      </button>
+      <button class="tab-btn" data-tab="issues">
+        📋 Issues <span class="tab-count" id="issues-badge">0</span>
+      </button>
+      <button class="tab-btn" data-tab="mrs">
+        🔀 Merge Requests <span class="tab-count" id="mrs-badge">0</span>
+      </button>
+      <button class="tab-btn" data-tab="releases">
+        🚀 Releases <span class="tab-count" id="releases-badge">0</span>
+      </button>
+      <button class="tab-btn" data-tab="sheet-preview">
+        📊 Live Sheet Grid
+      </button>
+    </div>
+
+    <!-- Tab 1: Code / Manifests -->
+    <div id="tab-code" class="tab-pane active">
+      <div class="card">
+        <div class="card-header">
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <span class="branch-tag">🌿 main</span>
+            <span style="color:var(--text-muted)">• Workload manifests</span>
+          </div>
+          <span style="color:var(--text-muted); font-size:0.8rem;">Latest sync from Sheetlux CD</span>
+        </div>
+        <div id="file-tree-container"></div>
+      </div>
+
+      <!-- File Content Viewer -->
+      <div class="card" id="file-viewer-card" style="display:none;">
+        <div class="card-header">
+          <span id="viewing-file-name" style="font-family:var(--font-mono);"></span>
+          <button class="btn" style="padding:0.2rem 0.6rem; font-size:0.75rem;" id="btn-close-file-viewer">Close Preview</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div class="code-viewer" id="code-viewer-content"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 2: Issues -->
+    <div id="tab-issues" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div style="display:flex; gap:0.75rem;">
+            <button class="btn btn-primary" id="btn-open-new-issue">+ New Issue</button>
+          </div>
+          <div style="color:var(--text-muted); font-size:0.85rem;">
+            <span>Tracking items in Google Sheet `Issues` tab</span>
+          </div>
+        </div>
+        <div id="issues-list-container"></div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Merge Requests -->
+    <div id="tab-mrs" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div style="display:flex; gap:0.75rem;">
+            <button class="btn btn-purple" id="btn-open-new-mr-tab">+ New Merge Request</button>
+          </div>
+          <div style="color:var(--text-muted); font-size:0.85rem;">
+            <span>Comparing manifest range specs in `MergeRequests` tab</span>
+          </div>
+        </div>
+        <div id="mrs-list-container"></div>
+      </div>
+    </div>
+
+    <!-- Tab 4: Releases -->
+    <div id="tab-releases" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <span>Release Registry & Artifacts</span>
+          <span style="color:var(--text-muted); font-size:0.8rem;">Recorded in `Releases` tab</span>
+        </div>
+        <div id="releases-list-container"></div>
+      </div>
+    </div>
+
+    <!-- Tab 5: Live Sheet Preview -->
+    <div id="tab-sheet-preview" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <span>📊 Live Tab:</span>
+            <select id="sheet-tab-select" class="btn">
+              <option value="Repos">Repos</option>
+              <option value="Issues">Issues</option>
+              <option value="MergeRequests">MergeRequests</option>
+              <option value="Files">Files</option>
+              <option value="Releases">Releases</option>
+              <option value="Users">Users</option>
+              <option value="Comments">Comments</option>
+              <option value="Stars">Stars</option>
+            </select>
+          </div>
+          <span style="color:var(--text-muted); font-size:0.8rem;">Exact representation of the Google Sheet data plane</span>
+        </div>
+        <div class="card-body" style="overflow-x:auto;">
+          <table class="sheet-table" id="sheet-grid-table"></table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- MR Detail / Diff Modal -->
+  <div class="modal-backdrop" id="mr-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div>
+          <h3 id="modal-mr-title" style="font-size:1.1rem;"></h3>
+          <span style="font-size:0.8rem; color:var(--text-muted);" id="modal-mr-branches"></span>
+        </div>
+        <button class="btn" id="btn-close-mr-modal">✕</button>
+      </div>
+      <div class="modal-body" id="modal-mr-body"></div>
+      <div class="modal-footer">
+        <button class="btn" id="btn-footer-close-mr">Close</button>
+        <button class="btn btn-purple" id="btn-merge-mr">✓ Merge MR (Reconcile)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Issue Modal -->
+  <div class="modal-backdrop" id="new-issue-modal">
+    <div class="modal-box" style="max-width:600px;">
+      <div class="modal-header">
+        <h3>Create New Issue</h3>
+        <button class="btn" id="btn-close-issue-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex; flex-direction:column; gap:0.75rem;">
+          <div>
+            <label style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.3rem;">Issue Title</label>
+            <input type="text" id="input-issue-title" class="btn" style="width:100%; text-align:left; cursor:text;" placeholder="e.g. Add CPU resource limits">
+          </div>
+          <div>
+            <label style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.3rem;">Description / Context</label>
+            <textarea id="input-issue-body" class="btn" style="width:100%; height:100px; text-align:left; cursor:text; resize:vertical;" placeholder="Describe desired changes..."></textarea>
+          </div>
+          <div>
+            <label style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.3rem;">Labels (comma separated)</label>
+            <input type="text" id="input-issue-labels" class="btn" style="width:100%; text-align:left; cursor:text;" value="enhancement">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="btn-cancel-issue">Cancel</button>
+        <button class="btn btn-primary" id="btn-submit-issue">Submit Issue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <p>SheetHub · GitLab-style DevOps forge on a Google Sheet. Part of the <a href="https://sncfoundation.github.io/" target="_blank">Sheet-Native Computing Foundation</a>.</p>
+    <p style="margin-top:0.3rem; font-size:0.75rem; color:var(--text-dim);">Zero production ambitions. It reconciles. 💩</p>
+  </footer>
+
+  <script>
+    const TOKEN = 'CHANGE_ME_super_secret';
+
+    // Comprehensive HTML escape function including single quotes to prevent XSS
+    function escapeHtml(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    const STATE = {
+      currentRepo: 'sncf/hello-web',
+      activeMr: null,
+      Repos: [
+        { name: 'sncf/hello-web', description: 'Reference 3-tier microservice manifest for Sheeternetes', default_branch: 'main', visibility: 'public', stars_count: 12, created_at: '2026-08-31T12:00:00Z', updated_at: '2026-08-31T12:00:00Z' },
+        { name: 'sncf/sheeternetes-manifests', description: 'Production GitOps cluster manifests deployed via Sheetlux CD', default_branch: 'main', visibility: 'public', stars_count: 42, created_at: '2026-08-31T12:00:00Z', updated_at: '2026-08-31T12:00:00Z' }
+      ],
+      Files: [
+        { repo: 'sncf/hello-web', path: 'app.json', branch: 'main', content: JSON.stringify({
+            deployments: [
+              { name: 'hello-web', image: 'traefik/whoami', replicas: 3, cpu_req: 100, mem_req: 64, command: '' },
+              { name: 'redis-cache', image: 'redis:alpine', replicas: 1, cpu_req: 150, mem_req: 128, command: '' }
+            ]
+          }, null, 2), updated_at: '2026-08-31T12:00:00Z' },
+        { repo: 'sncf/hello-web', path: 'README.md', branch: 'main', content: '# Hello Web\n\nA resilient web service running on Sheeternetes.', updated_at: '2026-08-31T12:00:00Z' },
+        { repo: 'sncf/sheeternetes-manifests', path: 'production.json', branch: 'main', content: JSON.stringify({
+            deployments: [
+              { name: 'ingress-router', image: 'traefik:v2.10', replicas: 2, cpu_req: 200, mem_req: 256, command: '' },
+              { name: 'metrics-collector', image: 'prom/prometheus:latest', replicas: 1, cpu_req: 300, mem_req: 512, command: '' }
+            ]
+          }, null, 2), updated_at: '2026-08-31T12:00:00Z' },
+      ],
+      Issues: [
+        { id: 'iss-001', repo: 'sncf/hello-web', number: 1, title: 'Scale hello-web to 5 replicas for traffic surge', body: 'Upcoming holiday campaign will increase load. We should scale hello-web from 3 to 5 replicas in app.json.', author: 'tym83', state: 'open', labels: 'enhancement,scaling', created_at: '2026-08-31T12:00:00Z', updated_at: '2026-08-31T12:00:00Z' },
+        { id: 'iss-002', repo: 'sncf/hello-web', number: 2, title: 'Add memory limits to redis-cache container', body: 'Currently redis-cache has mem_req 128MiB. Let us ensure it has proper resource reservations.', author: 'prateeekbuilds', state: 'closed', labels: 'performance', created_at: '2026-08-31T12:00:00Z', updated_at: '2026-08-31T12:00:00Z' },
+        { id: 'iss-101', repo: 'sncf/sheeternetes-manifests', number: 1, title: 'Provision ingress controller', body: 'Configure Traefik routing in production.json.', author: 'prateeekbuilds', state: 'open', labels: 'networking', created_at: '2026-08-31T12:00:00Z', updated_at: '2026-08-31T12:00:00Z' }
+      ],
+      MergeRequests: [
+        {
+          id: 'mr-001',
+          repo: 'sncf/hello-web',
+          number: 1,
+          title: 'Scale hello-web to 5 replicas & upgrade redis',
+          description: 'Resolves #1. Increases replica count to handle surge traffic and bumps redis version.',
+          author: 'prateeekbuilds',
+          source_branch: 'scale-up-v2',
+          target_branch: 'main',
+          state: 'open',
+          diff_manifest: JSON.stringify({
+            path: 'app.json',
+            before: {
+              deployments: [
+                { name: 'hello-web', image: 'traefik/whoami', replicas: 3, cpu_req: 100, mem_req: 64, command: '' },
+                { name: 'redis-cache', image: 'redis:alpine', replicas: 1, cpu_req: 150, mem_req: 128, command: '' }
+              ]
+            },
+            after: {
+              deployments: [
+                { name: 'hello-web', image: 'traefik/whoami', replicas: 5, cpu_req: 100, mem_req: 64, command: '' },
+                { name: 'redis-cache', image: 'redis:7-alpine', replicas: 2, cpu_req: 150, mem_req: 256, command: '' }
+              ]
+            }
+          }, null, 2),
+          created_at: '2026-08-31T12:00:00Z',
+          updated_at: '2026-08-31T12:00:00Z'
+        },
+        {
+          id: 'mr-101',
+          repo: 'sncf/sheeternetes-manifests',
+          number: 1,
+          title: 'Add prometheus monitoring stack',
+          description: 'Deploys Prometheus collector pod for cluster metrics.',
+          author: 'tym83',
+          source_branch: 'add-prom',
+          target_branch: 'main',
+          state: 'open',
+          diff_manifest: JSON.stringify({
+            path: 'production.json',
+            before: {
+              deployments: [
+                { name: 'ingress-router', image: 'traefik:v2.10', replicas: 2, cpu_req: 200, mem_req: 256, command: '' }
+              ]
+            },
+            after: {
+              deployments: [
+                { name: 'ingress-router', image: 'traefik:v2.10', replicas: 2, cpu_req: 200, mem_req: 256, command: '' },
+                { name: 'metrics-collector', image: 'prom/prometheus:latest', replicas: 1, cpu_req: 300, mem_req: 512, command: '' }
+              ]
+            }
+          }, null, 2),
+          created_at: '2026-08-31T12:00:00Z',
+          updated_at: '2026-08-31T12:00:00Z'
+        }
+      ],
+      Releases: [
+        { id: 'rel-001', repo: 'sncf/hello-web', tag_name: 'v1.0.0', name: 'v1.0.0: Initial Production Rollout', body: 'First stable release deployed to Sheeternetes cluster via Sheetlux CD.', author: 'prateeekbuilds', created_at: '2026-08-31T12:00:00Z', assets: 'app.json' },
+        { id: 'rel-101', repo: 'sncf/sheeternetes-manifests', tag_name: 'v2.0.0', name: 'v2.0.0: High Availability Infra', body: 'Multi-node ingress and metrics monitoring configuration.', author: 'tym83', created_at: '2026-08-31T12:00:00Z', assets: 'production.json' }
+      ],
+      Users: [
+        { username: 'prateeekbuilds', name: 'Prateek', avatar_url: 'https://github.com/prateeekbuilds.png', role: 'Maintainer', bio: 'Spreadsheet engineer & forge builder' },
+        { username: 'tym83', name: 'Timur', avatar_url: 'https://github.com/tym83.png', role: 'SNCF Chair', bio: 'Reconciling containers since cell A1' }
+      ],
+      Comments: [
+        { id: 'comm-001', target_type: 'mr', target_id: 'mr-001', author: 'tym83', body: 'Diff looks clean! The memory bump on redis is well within node capacity. CI passed.', created_at: '2026-08-31T12:30:00Z' }
+      ],
+      Stars: [
+        { repo: 'sncf/hello-web', username: 'prateeekbuilds' },
+        { repo: 'sncf/hello-web', username: 'tym83' },
+        { repo: 'sncf/sheeternetes-manifests', username: 'prateeekbuilds' }
+      ]
+    };
+
+    // Load from live API with token and canonical kind names
+    async function refreshData() {
+      const btn = document.getElementById('btn-sync-sheet');
+      btn.textContent = 'Syncing…';
+      try {
+        const kinds = ['repos', 'issues', 'mergerequests', 'files', 'releases', 'comments', 'stars', 'users'];
+        for (const k of kinds) {
+          const res = await fetch(`?token=${encodeURIComponent(TOKEN)}&kind=${encodeURIComponent(k)}&repo=${encodeURIComponent(STATE.currentRepo)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.items) {
+              const map = { repos:'Repos', issues:'Issues', mergerequests:'MergeRequests', files:'Files', releases:'Releases', comments:'Comments', stars:'Stars', users:'Users' };
+              STATE[map[k]] = data.items;
+            }
+          }
+        }
+      } catch (e) {
+        console.log('Using client-side state');
+      }
+      btn.textContent = '⟳ Sync Sheet';
+      renderAll();
+    }
+
+    function switchTab(name) {
+      document.querySelectorAll('.nav-tabs .tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      const activeBtn = document.querySelector(`.nav-tabs .tab-btn[data-tab="${name}"]`);
+      if (activeBtn) activeBtn.classList.add('active');
+      const pane = document.getElementById('tab-' + name);
+      if (pane) pane.classList.add('active');
+
+      if (name === 'sheet-preview') {
+        renderSheetGrid(document.getElementById('sheet-tab-select').value);
+      }
+    }
+
+    function renderAll() {
+      const cur = STATE.Repos.find(r => r.name === STATE.currentRepo);
+      if (cur) {
+        document.getElementById('repo-desc-heading').textContent = cur.description;
+      }
+      renderFiles();
+      renderIssues();
+      renderMrs();
+      renderReleases();
+      updateBadges();
+    }
+
+    function updateBadges() {
+      const openIssues = STATE.Issues.filter(i => i.repo === STATE.currentRepo && i.state === 'open').length;
+      document.getElementById('issues-badge').textContent = openIssues;
+
+      const openMrs = STATE.MergeRequests.filter(m => m.repo === STATE.currentRepo && m.state === 'open').length;
+      document.getElementById('mrs-badge').textContent = openMrs;
+
+      const relCount = STATE.Releases.filter(r => r.repo === STATE.currentRepo).length;
+      document.getElementById('releases-badge').textContent = relCount;
+
+      const starCount = STATE.Stars.filter(s => s.repo === STATE.currentRepo).length;
+      document.getElementById('star-count').textContent = starCount;
+    }
+
+    function renderFiles() {
+      const c = document.getElementById('file-tree-container');
+      const files = STATE.Files.filter(f => f.repo === STATE.currentRepo);
+      if (!files.length) {
+        c.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No files found in repo.</div>';
+        return;
+      }
+      c.innerHTML = files.map(f => `
+        <div class="file-tree-row" data-path="${escapeHtml(f.path)}">
+          <span class="file-name">📄 ${escapeHtml(f.path)}</span>
+          <span class="file-meta">Updated ${escapeHtml(f.updated_at ? f.updated_at.split('T')[0] : 'today')}</span>
+        </div>
+      `).join('');
+
+      c.querySelectorAll('.file-tree-row').forEach(row => {
+        row.addEventListener('click', () => viewFile(row.dataset.path));
+      });
+    }
+
+    function viewFile(path) {
+      const f = STATE.Files.find(x => x.repo === STATE.currentRepo && x.path === path);
+      if (!f) return;
+      document.getElementById('viewing-file-name').textContent = f.path;
+      const lines = f.content.split('\n');
+      const html = lines.map((l, i) => `
+        <div class="code-line">
+          <div class="code-line-no">${i + 1}</div>
+          <div class="code-line-content">${escapeHtml(l)}</div>
+        </div>
+      `).join('');
+      document.getElementById('code-viewer-content').innerHTML = html;
+      document.getElementById('file-viewer-card').style.display = 'block';
+    }
+
+    function closeFileViewer() {
+      document.getElementById('file-viewer-card').style.display = 'none';
+    }
+
+    function renderIssues() {
+      const c = document.getElementById('issues-list-container');
+      const issues = STATE.Issues.filter(i => i.repo === STATE.currentRepo);
+      if (!issues.length) {
+        c.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No issues recorded.</div>';
+        return;
+      }
+      c.innerHTML = issues.map(iss => `
+        <div class="list-item">
+          <div class="list-item-main">
+            <span class="${iss.state === 'open' ? 'icon-open' : 'icon-closed'}">${iss.state === 'open' ? '🟢' : '🟣'}</span>
+            <div>
+              <div class="item-title-row">
+                <span class="item-title">#${escapeHtml(iss.number)} ${escapeHtml(iss.title)}</span>
+                ${(iss.labels || '').split(',').filter(Boolean).map(l => `<span class="pill-label">${escapeHtml(l.trim())}</span>`).join('')}
+              </div>
+              <div class="item-subtext">Opened by @${escapeHtml(iss.author)} • State: <strong>${escapeHtml(iss.state)}</strong></div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderMrs() {
+      const c = document.getElementById('mrs-list-container');
+      const mrs = STATE.MergeRequests.filter(m => m.repo === STATE.currentRepo);
+      if (!mrs.length) {
+        c.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No merge requests found.</div>';
+        return;
+      }
+      c.innerHTML = mrs.map(mr => `
+        <div class="list-item" data-id="${escapeHtml(mr.id)}">
+          <div class="list-item-main">
+            <span class="${mr.state === 'open' ? 'icon-open' : mr.state === 'merged' ? 'icon-merged' : 'icon-closed'}">
+              ${mr.state === 'open' ? '🔀' : mr.state === 'merged' ? '🟣' : '🔴'}
+            </span>
+            <div>
+              <div class="item-title-row">
+                <span class="item-title mr-link" data-id="${escapeHtml(mr.id)}">!${escapeHtml(mr.number)} ${escapeHtml(mr.title)}</span>
+                <span class="pill-label" style="${mr.state === 'merged' ? 'background:rgba(137,87,229,0.3);' : ''}">${escapeHtml(mr.state)}</span>
+              </div>
+              <div class="item-subtext">
+                <span class="branch-tag">${escapeHtml(mr.source_branch)}</span> → <span class="branch-tag">${escapeHtml(mr.target_branch)}</span> • by @${escapeHtml(mr.author)}
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-review" data-id="${escapeHtml(mr.id)}">Review Diff</button>
+        </div>
+      `).join('');
+
+      c.querySelectorAll('.mr-link, .btn-review').forEach(el => {
+        el.addEventListener('click', () => openMrModal(el.dataset.id));
+      });
+    }
+
+    function renderReleases() {
+      const c = document.getElementById('releases-list-container');
+      const rels = STATE.Releases.filter(r => r.repo === STATE.currentRepo);
+      if (!rels.length) {
+        c.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No releases tagged yet.</div>';
+        return;
+      }
+      c.innerHTML = rels.map(r => `
+        <div class="list-item">
+          <div class="list-item-main">
+            <span style="font-size:1.2rem;">🏷️</span>
+            <div>
+              <div class="item-title-row">
+                <span class="item-title">${escapeHtml(r.name || r.tag_name)}</span>
+                <span class="branch-tag">${escapeHtml(r.tag_name)}</span>
+              </div>
+              <div class="item-subtext">${escapeHtml(r.body)}</div>
+              <div style="margin-top:0.5rem;">
+                <span style="font-size:0.8rem; color:var(--text-muted);">Artifacts: <code>${escapeHtml(r.assets || 'manifests.json')}</code></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderSheetGrid(tabName) {
+      const table = document.getElementById('sheet-grid-table');
+      const rows = STATE[tabName] || [];
+      if (!rows.length) {
+        table.innerHTML = '<tr><td style="color:var(--text-muted); padding:1rem;">Tab is currently empty.</td></tr>';
+        return;
+      }
+      const headers = Object.keys(rows[0]);
+      let html = '<thead><tr>' + headers.map(h => `<th>${escapeHtml(h)}</th>`).join('') + '</tr></thead><tbody>';
+      rows.forEach(r => {
+        html += '<tr>' + headers.map(h => {
+          let v = r[h];
+          if (typeof v === 'object') v = JSON.stringify(v);
+          if (String(v).length > 60) v = String(v).substring(0, 57) + '…';
+          return `<td>${escapeHtml(String(v == null ? '' : v))}</td>`;
+        }).join('') + '</tr>';
+      });
+      html += '</tbody>';
+      table.innerHTML = html;
+    }
+
+    function openMrModal(mrId) {
+      const mr = STATE.MergeRequests.find(m => m.id === mrId);
+      if (!mr) return;
+      STATE.activeMr = mr;
+
+      document.getElementById('modal-mr-title').textContent = `!${mr.number} ${mr.title}`;
+      document.getElementById('modal-mr-branches').textContent = `${mr.source_branch} → ${mr.target_branch} • by @${mr.author}`;
+
+      let diffObj = null;
+      try { diffObj = typeof mr.diff_manifest === 'string' ? JSON.parse(mr.diff_manifest) : mr.diff_manifest; }
+      catch(e) {}
+
+      let diffHtml = '';
+      if (diffObj && diffObj.before && diffObj.after) {
+        diffHtml = `
+          <div class="diff-container">
+            <div class="diff-header">
+              <span>📄 ${escapeHtml(diffObj.path || 'app.json')}</span>
+              <span>Side-by-Side Spec Diff</span>
+            </div>
+            <div class="diff-grid">
+              <div class="diff-col">
+                <div class="diff-col-title">Before (${escapeHtml(mr.target_branch)})</div>
+                <pre class="diff-removed">${escapeHtml(JSON.stringify(diffObj.before, null, 2))}</pre>
+              </div>
+              <div class="diff-col">
+                <div class="diff-col-title">After (${escapeHtml(mr.source_branch)})</div>
+                <pre class="diff-added">${escapeHtml(JSON.stringify(diffObj.after, null, 2))}</pre>
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        diffHtml = `<pre class="code-viewer" style="padding:1rem;">${escapeHtml(mr.diff_manifest || 'No diff provided')}</pre>`;
+      }
+
+      const comments = STATE.Comments.filter(c => c.target_id === mr.id);
+      const commentsHtml = comments.map(c => `
+        <div class="comment-box">
+          <div class="comment-header">
+            <span><strong>@${escapeHtml(c.author)}</strong> reviewed</span>
+            <span>${escapeHtml(c.created_at ? c.created_at.split('T')[0] : 'today')}</span>
+          </div>
+          <div class="comment-body">${escapeHtml(c.body)}</div>
+        </div>
+      `).join('');
+
+      document.getElementById('modal-mr-body').innerHTML = `
+        <p style="margin-bottom:1rem; color:var(--text);">${escapeHtml(mr.description)}</p>
+        ${diffHtml}
+        <h4 style="margin-top:1.5rem; font-size:0.95rem;">Review Comments (${comments.length})</h4>
+        ${commentsHtml}
+      `;
+
+      const mergeBtn = document.getElementById('btn-merge-mr');
+      if (mr.state === 'merged') {
+        mergeBtn.disabled = true;
+        mergeBtn.textContent = '✓ Already Merged';
+      } else {
+        mergeBtn.disabled = false;
+        mergeBtn.textContent = '✓ Merge MR (Reconcile)';
+      }
+
+      document.getElementById('mr-modal').classList.add('open');
+    }
+
+    async function executeMerge() {
+      if (!STATE.activeMr) return;
+      const mr = STATE.activeMr;
+      mr.state = 'merged';
+
+      // Apply diff to Files tab
+      try {
+        const diff = typeof mr.diff_manifest === 'string' ? JSON.parse(mr.diff_manifest) : mr.diff_manifest;
+        if (diff && diff.path && diff.after) {
+          let file = STATE.Files.find(f => f.repo === mr.repo && f.path === diff.path);
+          if (file) {
+            file.content = typeof diff.after === 'string' ? diff.after : JSON.stringify(diff.after, null, 2);
+          }
+        }
+      } catch (e) {}
+
+      try {
+        await fetch('', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: TOKEN, action: 'merge_mr', repo: mr.repo, mr_id: mr.id })
+        });
+      } catch(e) {}
+
+      closeModal('mr-modal');
+      renderAll();
+      alert(`MR !${mr.number} has been merged! Workload manifest updated for Sheetlux CD.`);
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('open');
+    }
+
+    async function submitNewIssue() {
+      const title = document.getElementById('input-issue-title').value.trim();
+      const body = document.getElementById('input-issue-body').value.trim();
+      const labels = document.getElementById('input-issue-labels').value.trim();
+      if (!title) { alert('Please provide an issue title.'); return; }
+
+      const repoIssues = STATE.Issues.filter(i => i.repo === STATE.currentRepo);
+      const nextNum = repoIssues.length ? Math.max(...repoIssues.map(i => Number(i.number) || 0)) + 1 : 1;
+      const newIssue = {
+        id: 'iss-' + Math.random().toString(36).substr(2, 6),
+        repo: STATE.currentRepo,
+        number: nextNum,
+        title,
+        body,
+        author: 'prateeekbuilds',
+        state: 'open',
+        labels: labels || 'enhancement',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      STATE.Issues.push(newIssue);
+
+      try {
+        await fetch('', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: TOKEN, action: 'create_issue', ...newIssue })
+        });
+      } catch (e) {}
+
+      closeModal('new-issue-modal');
+      document.getElementById('input-issue-title').value = '';
+      document.getElementById('input-issue-body').value = '';
+      renderAll();
+    }
+
+    function toggleStar() {
+      const idx = STATE.Stars.findIndex(s => s.repo === STATE.currentRepo && s.username === 'prateeekbuilds');
+      if (idx !== -1) STATE.Stars.splice(idx, 1);
+      else STATE.Stars.push({ repo: STATE.currentRepo, username: 'prateeekbuilds', starred_at: new Date().toISOString() });
+      updateBadges();
+    }
+
+    // Attach Event Listeners
+    document.getElementById('btn-sync-sheet').addEventListener('click', refreshData);
+    document.getElementById('btn-star').addEventListener('click', toggleStar);
+    document.getElementById('btn-close-file-viewer').addEventListener('click', closeFileViewer);
+    document.getElementById('btn-close-mr-modal').addEventListener('click', () => closeModal('mr-modal'));
+    document.getElementById('btn-footer-close-mr').addEventListener('click', () => closeModal('mr-modal'));
+    document.getElementById('btn-merge-mr').addEventListener('click', executeMerge);
+    document.getElementById('btn-open-new-issue').addEventListener('click', () => document.getElementById('new-issue-modal').classList.add('open'));
+    document.getElementById('btn-close-issue-modal').addEventListener('click', () => closeModal('new-issue-modal'));
+    document.getElementById('btn-cancel-issue').addEventListener('click', () => closeModal('new-issue-modal'));
+    document.getElementById('btn-submit-issue').addEventListener('click', submitNewIssue);
+    document.getElementById('btn-open-new-mr').addEventListener('click', () => alert('MR creation: specify source and target branches to compare manifest ranges.'));
+    document.getElementById('btn-open-new-mr-tab').addEventListener('click', () => alert('MR creation: specify source and target branches to compare manifest ranges.'));
+
+    document.querySelectorAll('.nav-tabs .tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    document.getElementById('sheet-tab-select').addEventListener('change', (e) => renderSheetGrid(e.target.value));
+
+    document.getElementById('repo-select-picker').addEventListener('change', (e) => {
+      STATE.currentRepo = e.target.value;
+      renderAll();
+    });
+
+    // Initial render
+    renderAll();
+  </script>
+</body>
+</html>
