@@ -55,14 +55,16 @@ function api2(s) {
 }
 
 const store = {
-  Repos:         makeSheet(['name', 'description', 'default_branch', 'visibility', 'stars_count', 'created_at', 'updated_at']),
-  Issues:        makeSheet(['id', 'repo', 'number', 'title', 'body', 'author', 'state', 'labels', 'created_at', 'updated_at']),
-  MergeRequests: makeSheet(['id', 'repo', 'number', 'title', 'description', 'author', 'source_branch', 'target_branch', 'state', 'diff_manifest', 'created_at', 'updated_at']),
-  Releases:      makeSheet(['id', 'repo', 'tag_name', 'name', 'body', 'author', 'created_at', 'assets']),
-  Users:         makeSheet(['username', 'name', 'avatar_url', 'role', 'bio', 'created_at']),
-  Comments:      makeSheet(['id', 'target_type', 'target_id', 'author', 'body', 'created_at']),
-  Stars:         makeSheet(['repo', 'username', 'starred_at']),
-  Files:         makeSheet(['repo', 'path', 'branch', 'content', 'updated_at']),
+  Repos:          makeSheet(['name', 'description', 'default_branch', 'visibility', 'stars_count', 'created_at', 'updated_at']),
+  Issues:         makeSheet(['id', 'repo', 'number', 'title', 'body', 'author', 'state', 'labels', 'created_at', 'updated_at']),
+  MergeRequests:  makeSheet(['id', 'repo', 'number', 'title', 'description', 'author', 'source_branch', 'target_branch', 'state', 'diff_manifest', 'created_at', 'updated_at']),
+  Releases:       makeSheet(['id', 'repo', 'tag_name', 'name', 'body', 'author', 'created_at', 'assets']),
+  Users:          makeSheet(['username', 'name', 'avatar_url', 'role', 'bio', 'created_at']),
+  Comments:       makeSheet(['id', 'target_type', 'target_id', 'author', 'body', 'created_at']),
+  Stars:          makeSheet(['repo', 'username', 'starred_at']),
+  Files:          makeSheet(['repo', 'path', 'branch', 'content', 'updated_at']),
+  Registry:       makeSheet(['id', 'repo', 'name', 'tag', 'digest', 'size_bytes', 'chunk_count', 'chunk_map', 'author', 'created_at', 'updated_at']),
+  RegistryChunks: makeSheet(['id', 'digest', 'chunk_index', 'chunk_data', 'size_bytes', 'created_at']),
 };
 
 const SpreadsheetApp = {
@@ -207,5 +209,126 @@ const lockTimeoutRes = JSON.parse(api.doPost({
 check('lock timeout returns clean JSON error', lockTimeoutRes.error === 'server busy', lockTimeoutRes);
 lockShouldFail = false;
 
+console.log('\n== F: Container Registry in Cells (Issue #1) ==');
+const seededRegistry = api.readTab('Registry');
+check('Registry metadata tab seeded', seededRegistry.length >= 2, seededRegistry.length);
+check('whoami and ingress-router container images present',
+  seededRegistry.some(r => r.repo === 'sncf/hello-web' && r.name === 'traefik/whoami') &&
+  seededRegistry.some(r => r.repo === 'sncf/sheeternetes-manifests' && r.name === 'ingress-router'),
+  seededRegistry.map(r => `${r.repo}:${r.name}:${r.tag}`)
+);
+
+const seededChunks = api.readTab('RegistryChunks');
+check('RegistryChunks tab seeded with chunk rows', seededChunks.length >= 3, seededChunks.length);
+check('All seeded chunk characters are <= 32,767 (Excel cell limit)',
+  seededChunks.every(c => String(c.chunk_data).length <= 32767),
+  seededChunks.map(c => String(c.chunk_data).length)
+);
+
+// Query registry with repo filtering
+const reqHelloRegistry = JSON.parse(api.doGet({ parameter: { token: validToken, kind: 'registry', repo: 'sncf/hello-web' } })._t);
+check('doGet ?kind=registry&repo=sncf/hello-web filters by repo',
+  reqHelloRegistry.items.length >= 1 && reqHelloRegistry.items.every(r => r.repo === 'sncf/hello-web'),
+  reqHelloRegistry.items
+);
+
+// Push large image layer (>70,000 base64 chars) that requires automatic cell range sharding
+const crypto = require('crypto');
+const rawPayload = Buffer.from('SheetHub container layer test binary data payload '.repeat(2000), 'utf8');
+const testDigest = 'sha256:' + crypto.createHash('sha256').update(rawPayload).digest('hex');
+const testBase64 = rawPayload.toString('base64');
+
+check('Test payload exceeds single cell capacity (len > 32767)', testBase64.length > 32767, testBase64.length);
+
+const pushRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'web-service',
+      tag: 'v1.2.3',
+      digest: testDigest,
+      content: testBase64,
+      author: 'prateeekbuilds'
+    })
+  }
+})._t);
+
+check('push_image succeeds with sharded chunk count >= 2', pushRes.ok && pushRes.chunk_count >= 2, pushRes);
+check('push_image metadata has chunk_map JSON', pushRes.image && Array.isArray(JSON.parse(pushRes.image.chunk_map)), pushRes.image?.chunk_map);
+
+const chunksAfterPush = api.readTab('RegistryChunks');
+const pushedImageChunks = chunksAfterPush.filter(c => c.digest === testDigest);
+check('All sharded chunks strictly respect <= 32,767 char Excel cell cap',
+  pushedImageChunks.length >= 2 && pushedImageChunks.every(c => String(c.chunk_data).length <= 32767),
+  pushedImageChunks.map(c => String(c.chunk_data).length)
+);
+
+// Reject push with oversized chunk (> 32767 chars)
+const oversizedRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'oversized-test',
+      tag: 'latest',
+      chunks: ['A'.repeat(35000)]
+    })
+  }
+})._t);
+check('push_image rejects chunks exceeding 32,767 cell limit', oversizedRes.error && oversizedRes.error.includes('32767'), oversizedRes);
+
+// Pull image and verify full reassembly + checksum match
+const pullRes = JSON.parse(api.doGet({
+  parameter: {
+    token: validToken,
+    kind: 'registry_pull',
+    repo: 'sncf/hello-web',
+    name: 'web-service',
+    tag: 'v1.2.3'
+  }
+})._t);
+
+check('registry_pull returns ok with image metadata and chunks', pullRes.ok && pullRes.image && Array.isArray(pullRes.chunks), pullRes.ok);
+
+// Reassemble base64 from all chunks in order
+const reassembledBase64 = pullRes.chunks
+  .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index))
+  .map(c => c.chunk_data)
+  .join('');
+
+const reassembledBinary = Buffer.from(reassembledBase64, 'base64');
+const reassembledDigest = 'sha256:' + crypto.createHash('sha256').update(reassembledBinary).digest('hex');
+
+check('Reassembled base64 matches original payload exactly', reassembledBase64 === testBase64, {
+  origLen: testBase64.length,
+  reassembledLen: reassembledBase64.length
+});
+check('Reassembled SHA-256 digest matches metadata digest', reassembledDigest === testDigest, {
+  expected: testDigest,
+  actual: reassembledDigest
+});
+
+// Delete image and ensure cleanup
+const deleteRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'delete_image',
+      repo: 'sncf/hello-web',
+      image: 'web-service:v1.2.3'
+    })
+  }
+})._t);
+
+check('delete_image returns ok', deleteRes.ok && deleteRes.deleted, deleteRes);
+const registryAfterDelete = api.readTab('Registry');
+check('image deleted from Registry metadata tab', !registryAfterDelete.some(r => r.digest === testDigest), registryAfterDelete.length);
+const chunksAfterDelete = api.readTab('RegistryChunks');
+check('associated chunks deleted from RegistryChunks tab', !chunksAfterDelete.some(c => c.digest === testDigest), chunksAfterDelete.length);
+
 console.log(`\n==== SheetHub Test Results: ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);
+

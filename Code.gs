@@ -16,14 +16,16 @@
 const TOKEN = 'CHANGE_ME_super_secret';
 
 const TABS = {
-  Repos:         ['name', 'description', 'default_branch', 'visibility', 'stars_count', 'created_at', 'updated_at'],
-  Issues:        ['id', 'repo', 'number', 'title', 'body', 'author', 'state', 'labels', 'created_at', 'updated_at'],
-  MergeRequests: ['id', 'repo', 'number', 'title', 'description', 'author', 'source_branch', 'target_branch', 'state', 'diff_manifest', 'created_at', 'updated_at'],
-  Releases:      ['id', 'repo', 'tag_name', 'name', 'body', 'author', 'created_at', 'assets'],
-  Users:         ['username', 'name', 'avatar_url', 'role', 'bio', 'created_at'],
-  Comments:      ['id', 'target_type', 'target_id', 'author', 'body', 'created_at'],
-  Stars:         ['repo', 'username', 'starred_at'],
-  Files:         ['repo', 'path', 'branch', 'content', 'updated_at'],
+  Repos:          ['name', 'description', 'default_branch', 'visibility', 'stars_count', 'created_at', 'updated_at'],
+  Issues:         ['id', 'repo', 'number', 'title', 'body', 'author', 'state', 'labels', 'created_at', 'updated_at'],
+  MergeRequests:  ['id', 'repo', 'number', 'title', 'description', 'author', 'source_branch', 'target_branch', 'state', 'diff_manifest', 'created_at', 'updated_at'],
+  Releases:       ['id', 'repo', 'tag_name', 'name', 'body', 'author', 'created_at', 'assets'],
+  Users:          ['username', 'name', 'avatar_url', 'role', 'bio', 'created_at'],
+  Comments:       ['id', 'target_type', 'target_id', 'author', 'body', 'created_at'],
+  Stars:          ['repo', 'username', 'starred_at'],
+  Files:          ['repo', 'path', 'branch', 'content', 'updated_at'],
+  Registry:       ['id', 'repo', 'name', 'tag', 'digest', 'size_bytes', 'chunk_count', 'chunk_map', 'author', 'created_at', 'updated_at'],
+  RegistryChunks: ['id', 'digest', 'chunk_index', 'chunk_data', 'size_bytes', 'created_at'],
 };
 
 // ---------- generic sheet <-> objects ----------
@@ -308,6 +310,56 @@ function setup() {
       { repo: 'sncf/sheeternetes-manifests', username: 'prateeekbuilds', starred_at: now },
     ]);
   }
+
+  // Seed Container Registry
+  const registry = readTab('Registry');
+  if (!registry.length) {
+    const whoamiDigest = 'sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069';
+    const ingressDigest = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+    const sampleChunk1 = 'H4sICN8+v2YCA2hlbGxvLXdlYi50YXIA7Z1rc9s2Ese/SpX7Yd25K3s2d2U6dZ3Ex04yN5P6ykmk5MskMRdFkdT8eAAYgCIeEtAiyfG0Y4kEQGDx211gsViA/y8vLy/n51+vrq6evX/26sWzV5eXlz+ev/rpyfPnL1++ePnq6cvnLy9eXj5//vzps6eXl6+ev3z+9OXzV49ffHn16tWzn6/+/u1/Hj368/r/vv3vf3/9n4e3/37996+/';
+    const sampleChunk2 = 'mZzO5vP56eX5y/nJ9Ozn57Pz17Pz2cvz19PT6dnz8/lsNpufTk/PTmZn569Onr+cnrz86eTp2dlp+t1/AAAA///817t0wAAA';
+
+    writeTab('Registry', [
+      {
+        id: 'img-001',
+        repo: 'sncf/hello-web',
+        name: 'traefik/whoami',
+        tag: 'latest',
+        digest: whoamiDigest,
+        size_bytes: 49152,
+        chunk_count: 2,
+        chunk_map: JSON.stringify([
+          { index: 0, sheet: 'RegistryChunks', cell: 'D2', chars: sampleChunk1.length, size_bytes: 24576, digest: whoamiDigest },
+          { index: 1, sheet: 'RegistryChunks', cell: 'D3', chars: sampleChunk2.length, size_bytes: 24576, digest: whoamiDigest }
+        ]),
+        author: 'prateeekbuilds',
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: 'img-101',
+        repo: 'sncf/sheeternetes-manifests',
+        name: 'ingress-router',
+        tag: 'v2.10',
+        digest: ingressDigest,
+        size_bytes: 32768,
+        chunk_count: 1,
+        chunk_map: JSON.stringify([
+          { index: 0, sheet: 'RegistryChunks', cell: 'D4', chars: sampleChunk1.length, size_bytes: 32768, digest: ingressDigest }
+        ]),
+        author: 'tym83',
+        created_at: now,
+        updated_at: now
+      }
+    ]);
+
+    writeTab('RegistryChunks', [
+      { id: 'chk-001', digest: whoamiDigest, chunk_index: 0, chunk_data: sampleChunk1, size_bytes: 24576, created_at: now },
+      { id: 'chk-002', digest: whoamiDigest, chunk_index: 1, chunk_data: sampleChunk2, size_bytes: 24576, created_at: now },
+      { id: 'chk-101', digest: ingressDigest, chunk_index: 0, chunk_data: sampleChunk1, size_bytes: 32768, created_at: now },
+    ]);
+  }
 }
 
 // ---------- Web App: apiserver endpoint ----------
@@ -344,18 +396,41 @@ function doGet(e) {
     comments: 'Comments',
     stars: 'Stars',
     files: 'Files',
+    registry: 'Registry',
+    images: 'Registry',
+    containerregistry: 'Registry',
+    registry_chunks: 'RegistryChunks',
+    chunks: 'RegistryChunks',
+    registry_pull: 'Registry',
   };
 
   const tab = map[kind];
   if (!tab) return json({ error: 'unknown kind ' + kind });
 
   let items = readTab(tab);
-  if (repoFilter && ['Issues', 'MergeRequests', 'Releases', 'Files', 'Stars'].indexOf(tab) !== -1) {
+  if (repoFilter && ['Issues', 'MergeRequests', 'Releases', 'Files', 'Stars', 'Registry'].indexOf(tab) !== -1) {
     items = items.filter(it => String(it.repo).toLowerCase() === repoFilter.toLowerCase());
   }
 
+  if (tab === 'Registry') {
+    if (p.name) items = items.filter(it => String(it.name).toLowerCase() === p.name.toLowerCase());
+    if (p.tag) items = items.filter(it => String(it.tag).toLowerCase() === p.tag.toLowerCase());
+    if (p.digest) items = items.filter(it => String(it.digest) === String(p.digest));
+  }
+
   if (p.id) {
-    items = items.filter(it => String(it.id) === String(p.id) || String(it.number) === String(p.id));
+    items = items.filter(it => String(it.id) === String(p.id) || String(it.number) === String(p.id) || String(it.tag) === String(p.id) || String(it.digest) === String(p.id));
+  }
+
+  // Handle pull query (fetch image + ordered chunks)
+  if (kind === 'registry_pull' || (tab === 'Registry' && p.pull === 'true')) {
+    const targetImage = items[0] || (p.digest ? readTab('Registry').find(i => i.digest === p.digest) : null);
+    if (!targetImage) return json({ error: 'image not found' });
+    const allChunks = readTab('RegistryChunks');
+    const imageChunks = allChunks
+      .filter(c => c.digest === targetImage.digest)
+      .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index));
+    return json({ ok: true, image: targetImage, chunks: imageChunks });
   }
 
   return json({ items: items });
@@ -489,6 +564,154 @@ function doPost(e) {
       comments.push(comment);
       writeTab('Comments', comments);
       return json({ ok: true, comment: comment });
+    }
+
+    if (action === 'push_image' || action === 'push_layer') {
+      const repo = body.repo || 'sncf/default';
+      const name = body.name || 'image';
+      const tag = body.tag || 'latest';
+      const digest = body.digest || ('sha256:' + Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, ''));
+      const author = body.author || 'anonymous';
+      const rawChunks = body.chunks || [];
+      const maxChunkChars = body.max_chunk_chars || 30000;
+
+      let chunkList = [];
+      if (Array.isArray(rawChunks) && rawChunks.length > 0) {
+        rawChunks.forEach((c, idx) => {
+          const str = typeof c === 'string' ? c : (c.chunk_data || c.data || '');
+          chunkList.push({
+            index: idx,
+            data: str,
+            size_bytes: c.size_bytes || Math.round(str.length * 0.75)
+          });
+        });
+      } else if (body.content || body.data || body.base64) {
+        const fullBase64 = body.content || body.data || body.base64;
+        let idx = 0;
+        for (let i = 0; i < fullBase64.length; i += maxChunkChars) {
+          const slice = fullBase64.substring(i, i + maxChunkChars);
+          chunkList.push({
+            index: idx++,
+            data: slice,
+            size_bytes: Math.round(slice.length * 0.75)
+          });
+        }
+      }
+
+      if (chunkList.length === 0) {
+        return json({ error: 'no image content or chunks provided' });
+      }
+
+      // Strict enforcement of cell character limit (Excel / Sheets cap)
+      for (let k = 0; k < chunkList.length; k++) {
+        if (chunkList[k].data.length > 32767) {
+          return json({ error: 'chunk character limit exceeded (max 32767 characters per cell)' });
+        }
+      }
+
+      const totalSize = body.size_bytes || chunkList.reduce((acc, c) => acc + (c.size_bytes || 0), 0);
+
+      // Clean up previous chunks for this digest if re-pushing
+      let allChunks = readTab('RegistryChunks');
+      allChunks = allChunks.filter(c => c.digest !== digest);
+
+      const chunkMap = [];
+      const newChunkRows = [];
+
+      chunkList.forEach((chk) => {
+        const chunkId = 'chk-' + shortId();
+        const sheetName = 'RegistryChunks';
+        const cellCoord = 'D' + (allChunks.length + newChunkRows.length + 2);
+
+        chunkMap.push({
+          index: chk.index,
+          sheet: sheetName,
+          cell: cellCoord,
+          chars: chk.data.length,
+          size_bytes: chk.size_bytes,
+          digest: digest
+        });
+
+        newChunkRows.push({
+          id: chunkId,
+          digest: digest,
+          chunk_index: chk.index,
+          chunk_data: chk.data,
+          size_bytes: chk.size_bytes,
+          created_at: now
+        });
+      });
+
+      allChunks.push(...newChunkRows);
+      writeTab('RegistryChunks', allChunks);
+
+      // Upsert Registry metadata
+      const registry = readTab('Registry');
+      let imageRecord = registry.find(r => r.repo === repo && r.name === name && r.tag === tag);
+      if (imageRecord) {
+        imageRecord.digest = digest;
+        imageRecord.size_bytes = totalSize;
+        imageRecord.chunk_count = chunkList.length;
+        imageRecord.chunk_map = typeof body.chunk_map === 'string' ? body.chunk_map : JSON.stringify(chunkMap);
+        imageRecord.author = author;
+        imageRecord.updated_at = now;
+      } else {
+        imageRecord = {
+          id: 'img-' + shortId(),
+          repo: repo,
+          name: name,
+          tag: tag,
+          digest: digest,
+          size_bytes: totalSize,
+          chunk_count: chunkList.length,
+          chunk_map: typeof body.chunk_map === 'string' ? body.chunk_map : JSON.stringify(chunkMap),
+          author: author,
+          created_at: now,
+          updated_at: now
+        };
+        registry.push(imageRecord);
+      }
+      writeTab('Registry', registry);
+
+      return json({ ok: true, image: imageRecord, chunk_count: chunkList.length });
+    }
+
+    if (action === 'delete_image') {
+      const registry = readTab('Registry');
+      const targetIdx = registry.findIndex(r =>
+        (body.id && r.id === body.id) ||
+        (body.digest && r.digest === body.digest) ||
+        (body.repo && r.repo === body.repo && (r.name + ':' + r.tag === body.image || (r.name === body.name && r.tag === body.tag)))
+      );
+
+      if (targetIdx === -1) return json({ error: 'image not found' });
+      const removed = registry.splice(targetIdx, 1)[0];
+      writeTab('Registry', registry);
+
+      // Clean up chunks from chunk sheet
+      let allChunks = readTab('RegistryChunks');
+      allChunks = allChunks.filter(c => c.digest !== removed.digest);
+      writeTab('RegistryChunks', allChunks);
+
+      return json({ ok: true, deleted: removed });
+    }
+
+    if (action === 'pull_image') {
+      const registry = readTab('Registry');
+      const targetImage = registry.find(r =>
+        (body.id && r.id === body.id) ||
+        (body.digest && r.digest === body.digest) ||
+        (body.repo && r.repo === body.repo && (r.name + ':' + r.tag === body.image || (r.name === body.name && r.tag === body.tag)))
+      );
+
+      if (!targetImage) return json({ error: 'image not found' });
+
+      const allChunks = readTab('RegistryChunks');
+      const imageChunks = allChunks
+        .filter(c => c.digest === targetImage.digest)
+        .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index));
+
+      return json({ ok: true, image: targetImage, chunks: imageChunks });
     }
 
     return json({ error: 'unknown action: ' + action });
