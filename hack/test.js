@@ -79,7 +79,17 @@ const SpreadsheetApp = {
 };
 
 let uuidN = 0;
-const Utilities = { getUuid: () => (++uuidN).toString(36).split('').reverse().join('').padEnd(8, '0') };
+const crypto = require('crypto');
+const Utilities = {
+  getUuid: () => (++uuidN).toString(36).split('').reverse().join('').padEnd(8, '0'),
+  DigestAlgorithm: { SHA_256: 'SHA_256' },
+  base64Decode: (str) => Array.from(Buffer.from(str, 'base64')),
+  computeDigest: (algo, bytes) => {
+    const buf = Buffer.from(bytes);
+    const hashBuf = crypto.createHash('sha256').update(buf).digest();
+    return Array.from(new Int8Array(hashBuf.buffer, hashBuf.byteOffset, hashBuf.length));
+  }
+};
 let lockShouldFail = false;
 const LockService = { getScriptLock: () => ({ tryLock() { return !lockShouldFail; }, releaseLock() {} }) };
 const ContentService = {
@@ -233,13 +243,30 @@ check('doGet ?kind=registry&repo=sncf/hello-web filters by repo',
 );
 
 // Push large image layer (>70,000 base64 chars) that requires automatic cell range sharding
-const crypto = require('crypto');
 const rawPayload = Buffer.from('SheetHub container layer test binary data payload '.repeat(2000), 'utf8');
 const testDigest = 'sha256:' + crypto.createHash('sha256').update(rawPayload).digest('hex');
 const testBase64 = rawPayload.toString('base64');
 
 check('Test payload exceeds single cell capacity (len > 32767)', testBase64.length > 32767, testBase64.length);
 
+// Server-side SHA-256 verification: negative test for mismatched digest
+const badDigestRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'tampered-layer',
+      tag: 'v1.0.0',
+      digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+      content: testBase64,
+      author: 'prateeekbuilds'
+    })
+  }
+})._t);
+check('push_image rejects tampered / mismatched client digest', badDigestRes.error && badDigestRes.error.includes('digest mismatch'), badDigestRes);
+
+// Push image with valid digest and verify server-side verification
 const pushRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({
@@ -257,6 +284,7 @@ const pushRes = JSON.parse(api.doPost({
 
 check('push_image succeeds with sharded chunk count >= 2', pushRes.ok && pushRes.chunk_count >= 2, pushRes);
 check('push_image metadata has chunk_map JSON', pushRes.image && Array.isArray(JSON.parse(pushRes.image.chunk_map)), pushRes.image?.chunk_map);
+check('push_image computed authoritative digest matches testDigest', pushRes.image && pushRes.image.digest === testDigest, pushRes.image?.digest);
 
 const chunksAfterPush = api.readTab('RegistryChunks');
 const pushedImageChunks = chunksAfterPush.filter(c => c.digest === testDigest);
@@ -264,6 +292,44 @@ check('All sharded chunks strictly respect <= 32,767 char Excel cell cap',
   pushedImageChunks.length >= 2 && pushedImageChunks.every(c => String(c.chunk_data).length <= 32767),
   pushedImageChunks.map(c => String(c.chunk_data).length)
 );
+
+// Server-side automatic SHA-256 computation when client supplies no digest
+const autoDigestPayload = Buffer.from('Auto digest computation test layer', 'utf8');
+const autoExpectedDigest = 'sha256:' + crypto.createHash('sha256').update(autoDigestPayload).digest('hex');
+const autoPushRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'auto-digest-img',
+      tag: 'latest',
+      content: autoDigestPayload.toString('base64'),
+      author: 'prateeekbuilds'
+    })
+  }
+})._t);
+check('push_image without digest computes authoritative SHA-256 server-side', autoPushRes.ok && autoPushRes.image.digest === autoExpectedDigest, autoPushRes);
+
+// Orphaned chunk cleanup test: re-push same repo:name:tag with new content/digest
+const newVersionPayload = Buffer.from('Updated layer v2 content', 'utf8');
+const newVersionDigest = 'sha256:' + crypto.createHash('sha256').update(newVersionPayload).digest('hex');
+const rePushRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'auto-digest-img',
+      tag: 'latest',
+      content: newVersionPayload.toString('base64'),
+      author: 'prateeekbuilds'
+    })
+  }
+})._t);
+check('re-pushing updated image returns ok with new digest', rePushRes.ok && rePushRes.image.digest === newVersionDigest, rePushRes);
+const chunksAfterRePush = api.readTab('RegistryChunks');
+check('orphaned chunks from old digest cleaned up from RegistryChunks tab', !chunksAfterRePush.some(c => c.digest === autoExpectedDigest), chunksAfterRePush.length);
 
 // Reject push with oversized chunk (> 32767 chars)
 const oversizedRes = JSON.parse(api.doPost({

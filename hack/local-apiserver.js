@@ -82,7 +82,17 @@ const SpreadsheetApp = {
 };
 
 let uuidN = 0;
-const Utilities = { getUuid: () => (++uuidN).toString(36).split('').reverse().join('').padEnd(8, '0') };
+const crypto = require('crypto');
+const Utilities = {
+  getUuid: () => (++uuidN).toString(36).split('').reverse().join('').padEnd(8, '0'),
+  DigestAlgorithm: { SHA_256: 'SHA_256' },
+  base64Decode: (str) => Array.from(Buffer.from(str, 'base64')),
+  computeDigest: (algo, bytes) => {
+    const buf = Buffer.from(bytes);
+    const hashBuf = crypto.createHash('sha256').update(buf).digest();
+    return Array.from(new Int8Array(hashBuf.buffer, hashBuf.byteOffset, hashBuf.length));
+  }
+};
 const LockService = { getScriptLock: () => ({ tryLock() { return true; }, releaseLock() {} }) };
 const ContentService = {
   MimeType: { JSON: 'json' },

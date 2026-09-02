@@ -1258,8 +1258,8 @@
       }
 
       c.innerHTML = images.map(img => {
-        const sizeKb = img.size_bytes ? (img.size_bytes / 1024).toFixed(1) + ' KB' : 'Unknown';
-        const shortDigest = img.digest ? img.digest.substring(0, 19) + '…' : 'sha256:…';
+        const sizeKb = img.size_bytes ? (Number(img.size_bytes) / 1024).toFixed(1) + ' KB' : 'Unknown';
+        const shortDigest = img.digest ? String(img.digest).substring(0, 19) + '…' : 'sha256:…';
         const pullCmd = `sheethub registry pull ${img.repo} ${img.name}:${img.tag}`;
 
         return `
@@ -1271,13 +1271,13 @@
                   <div class="item-title-row" style="align-items:center;">
                     <span class="item-title" style="font-size:1.05rem;">${escapeHtml(img.name)}</span>
                     <span class="branch-tag" style="color:#7ee787; border-color:rgba(46,160,67,0.4);">${escapeHtml(img.tag || 'latest')}</span>
-                    <span class="chunk-pill">📊 ${escapeHtml(img.chunk_count || 1)} cell chunk${Number(img.chunk_count) > 1 ? 's' : ''}</span>
-                    <span class="pill-label" style="background:rgba(88,166,255,0.15); color:#79c0ff;">💾 ${sizeKb}</span>
+                    <span class="chunk-pill">📊 ${escapeHtml(String(img.chunk_count || 1))} cell chunk${Number(img.chunk_count) > 1 ? 's' : ''}</span>
+                    <span class="pill-label" style="background:rgba(88,166,255,0.15); color:#79c0ff;">💾 ${escapeHtml(sizeKb)}</span>
                   </div>
                   <div class="item-subtext" style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; margin-top:0.35rem;">
                     <span>Pushed by @${escapeHtml(img.author || 'maintainer')}</span>
                     <span>•</span>
-                    <span class="digest-badge" title="Click to copy full digest" onclick="copyDigest('${escapeHtml(img.digest)}')">
+                    <span class="digest-badge btn-copy-digest" data-digest="${escapeHtml(img.digest)}" title="Click to copy full digest">
                       🔑 <code>${escapeHtml(shortDigest)}</code> 📋
                     </span>
                   </div>
@@ -1285,19 +1285,32 @@
               </div>
 
               <div style="display:flex; gap:0.5rem; align-items:center;">
-                <button class="btn btn-review" onclick="openChunkModal('${escapeHtml(img.id)}')">🔍 Inspect Shard Map</button>
-                <button class="btn" onclick="downloadLayer('${escapeHtml(img.id)}')">📥 Download Layer</button>
+                <button class="btn btn-review btn-inspect-shard" data-id="${escapeHtml(img.id)}">🔍 Inspect Shard Map</button>
+                <button class="btn btn-download-layer" data-id="${escapeHtml(img.id)}">📥 Download Layer</button>
               </div>
             </div>
 
             <div class="cli-snippet-box">
               <span>Pull CLI:</span>
               <code>${escapeHtml(pullCmd)}</code>
-              <button class="btn" style="padding:0.2rem 0.5rem; font-size:0.75rem;" onclick="copyDigest('${escapeHtml(pullCmd)}')">Copy</button>
+              <button class="btn btn-copy-cmd" style="padding:0.2rem 0.5rem; font-size:0.75rem;" data-cmd="${escapeHtml(pullCmd)}">Copy</button>
             </div>
           </div>
         `;
       }).join('');
+
+      c.querySelectorAll('.btn-inspect-shard').forEach(el => {
+        el.addEventListener('click', () => openChunkModal(el.dataset.id));
+      });
+      c.querySelectorAll('.btn-download-layer').forEach(el => {
+        el.addEventListener('click', () => downloadLayer(el.dataset.id));
+      });
+      c.querySelectorAll('.btn-copy-digest').forEach(el => {
+        el.addEventListener('click', () => copyDigest(el.dataset.digest));
+      });
+      c.querySelectorAll('.btn-copy-cmd').forEach(el => {
+        el.addEventListener('click', () => copyDigest(el.dataset.cmd));
+      });
     }
 
     function openChunkModal(imageId) {
@@ -1318,7 +1331,7 @@
 
       let tableHtml = `
         <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:1rem;">
-          To comply with Excel / Google Sheets maximum cell character limits (<strong>32,767 characters</strong>), this container layer has been automatically sharded across discrete spreadsheet cells.
+          To comply with spreadsheet cell limits (<strong>32,767 in Excel, 50,000 in Google Sheets</strong>), this container layer has been automatically sharded across discrete spreadsheet cells (&le; 30,000 chars/cell).
         </p>
         <div style="overflow-x:auto;">
           <table class="sheet-table">
@@ -1337,19 +1350,19 @@
 
       if (chunkMap && chunkMap.length) {
         chunkMap.forEach((m, idx) => {
-          const chars = m.chars || (matchingChunks[idx] ? matchingChunks[idx].chunk_data.length : 0);
-          const cell = m.cell || `D${idx + 2}`;
-          const sheet = m.sheet || 'RegistryChunks';
-          const size = m.size_bytes || Math.round(chars * 0.75);
+          const charsNum = Number(m.chars) || (matchingChunks[idx] ? Number(matchingChunks[idx].chunk_data.length) || 0 : 0);
+          const cell = String(m.cell || `D${idx + 2}`).replace(/[^a-zA-Z0-9]/g, '');
+          const sheet = String(m.sheet || 'RegistryChunks').replace(/[^a-zA-Z0-9_-]/g, '');
+          const sizeNum = Number(m.size_bytes) || Math.round(charsNum * 0.75);
 
           tableHtml += `
             <tr>
               <td><strong>#${idx + 1}</strong></td>
               <td><code>${escapeHtml(sheet)}</code></td>
               <td><span class="branch-tag">${escapeHtml(cell)}</span></td>
-              <td>${chars.toLocaleString()} chars</td>
-              <td>${size.toLocaleString()} B</td>
-              <td><span class="pill-label" style="color:#7ee787; background:rgba(46,160,67,0.2);">✓ Within 32,767 Cap</span></td>
+              <td>${escapeHtml(charsNum.toLocaleString())} chars</td>
+              <td>${escapeHtml(sizeNum.toLocaleString())} B</td>
+              <td><span class="pill-label" style="color:#7ee787; background:rgba(46,160,67,0.2);">✓ Within Cell Cap</span></td>
             </tr>
           `;
         });
@@ -1363,8 +1376,8 @@
         </div>
       `;
 
-      if (matchingChunks.length) {
-        const preview = matchingChunks[0].chunk_data.substring(0, 160) + '…';
+      if (matchingChunks.length && matchingChunks[0].chunk_data) {
+        const preview = String(matchingChunks[0].chunk_data).substring(0, 160) + '…';
         tableHtml += `
           <div style="margin-top:1.25rem;">
             <div style="font-size:0.85rem; font-weight:600; margin-bottom:0.4rem; color:var(--text-muted);">Cell D2 Base64 Preview:</div>
@@ -1378,6 +1391,7 @@
     }
 
     function copyDigest(text) {
+      if (!text) return;
       navigator.clipboard.writeText(text).then(() => {
         alert('Copied to clipboard:\n' + text);
       }).catch(() => {
@@ -1588,21 +1602,29 @@
 
       let base64Content = '';
       let fileSize = 0;
+      let rawBinaryBytes = null;
 
       if (fileInput.files && fileInput.files[0]) {
         const file = fileInput.files[0];
         fileSize = file.size;
         const arrayBuf = await file.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuf);
+        rawBinaryBytes = new Uint8Array(arrayBuf);
         let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
+        for (let i = 0; i < rawBinaryBytes.byteLength; i++) {
+          binary += String.fromCharCode(rawBinaryBytes[i]);
         }
         base64Content = btoa(binary);
       } else {
-        base64Content = btoa(`Simulated container layer payload for ${name}:${tag} on ${new Date().toISOString()}`);
-        fileSize = 1024;
+        const textPayload = `Simulated container layer payload for ${name}:${tag} on ${new Date().toISOString()}`;
+        base64Content = btoa(textPayload);
+        rawBinaryBytes = new TextEncoder().encode(textPayload);
+        fileSize = rawBinaryBytes.length;
       }
+
+      // Compute authoritative SHA-256 digest over the binary payload
+      const hashBuffer = await crypto.subtle.digest('SHA-256', rawBinaryBytes);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const realDigest = 'sha256:' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
       const maxChunk = 30000;
       const chunks = [];
@@ -1610,15 +1632,13 @@
         chunks.push(base64Content.substring(i, i + maxChunk));
       }
 
-      const fakeDigest = 'sha256:' + Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2, '0')).join('');
-
       const chunkMap = chunks.map((c, idx) => ({
         index: idx,
         sheet: 'RegistryChunks',
         cell: `D${STATE.RegistryChunks.length + idx + 2}`,
         chars: c.length,
         size_bytes: Math.round(c.length * 0.75),
-        digest: fakeDigest
+        digest: realDigest
       }));
 
       const newImg = {
@@ -1626,7 +1646,7 @@
         repo: STATE.currentRepo,
         name: name,
         tag: tag,
-        digest: fakeDigest,
+        digest: realDigest,
         size_bytes: fileSize,
         chunk_count: chunks.length,
         chunk_map: JSON.stringify(chunkMap),
@@ -1635,11 +1655,27 @@
         updated_at: new Date().toISOString()
       };
 
-      STATE.Registry.push(newImg);
+      // Clean up previous chunks for this digest if re-pushing
+      STATE.RegistryChunks = STATE.RegistryChunks.filter(c => c.digest !== realDigest);
+
+      const existingIdx = STATE.Registry.findIndex(r => r.repo === STATE.currentRepo && r.name === name && r.tag === tag);
+      if (existingIdx !== -1) {
+        const oldDigest = STATE.Registry[existingIdx].digest;
+        if (oldDigest && oldDigest !== realDigest) {
+          const isOldUsed = STATE.Registry.some((r, i) => i !== existingIdx && r.digest === oldDigest);
+          if (!isOldUsed) {
+            STATE.RegistryChunks = STATE.RegistryChunks.filter(c => c.digest !== oldDigest);
+          }
+        }
+        STATE.Registry[existingIdx] = newImg;
+      } else {
+        STATE.Registry.push(newImg);
+      }
+
       chunks.forEach((c, idx) => {
         STATE.RegistryChunks.push({
           id: 'chk-' + Math.random().toString(36).substr(2, 6),
-          digest: fakeDigest,
+          digest: realDigest,
           chunk_index: idx,
           chunk_data: c,
           size_bytes: Math.round(c.length * 0.75),
@@ -1657,7 +1693,7 @@
             repo: STATE.currentRepo,
             name: name,
             tag: tag,
-            digest: fakeDigest,
+            digest: realDigest,
             size_bytes: fileSize,
             chunks: chunks,
             author: 'prateeekbuilds'
@@ -1668,7 +1704,7 @@
       closeModal('push-image-modal');
       document.getElementById('input-img-name').value = '';
       renderAll();
-      alert(`✅ Image ${name}:${tag} successfully pushed and sharded into ${chunks.length} spreadsheet cell(s)!`);
+      alert(`✅ Image ${name}:${tag} successfully pushed and sharded into ${chunks.length} spreadsheet cell(s) with verified SHA-256!`);
     }
 
     function toggleStar() {

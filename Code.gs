@@ -66,6 +66,42 @@ function shortId() {
   return Utilities.getUuid().replace(/-/g, '').substring(0, 10);
 }
 
+function computeSha256(base64Str) {
+  try {
+    const bytes = Utilities.base64Decode(base64Str);
+    const rawHash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes);
+    let hex = '';
+    for (let i = 0; i < rawHash.length; i++) {
+      let byteVal = rawHash[i];
+      if (byteVal < 0) byteVal += 256;
+      const byteHex = byteVal.toString(16);
+      hex += byteHex.length === 1 ? '0' + byteHex : byteHex;
+    }
+    return 'sha256:' + hex;
+  } catch (err) {
+    return 'sha256:unknown';
+  }
+}
+
+function validateChunkMap(input, chunkCount, digest) {
+  if (!input) return null;
+  try {
+    const parsed = typeof input === 'string' ? JSON.parse(input) : input;
+    if (!Array.isArray(parsed) || parsed.length !== chunkCount) return null;
+    const sanitized = parsed.map((m, idx) => ({
+      index: Number(m.index) || idx,
+      sheet: String(m.sheet || 'RegistryChunks').replace(/[^a-zA-Z0-9_-]/g, ''),
+      cell: String(m.cell || `D${idx + 2}`).replace(/[^a-zA-Z0-9]/g, ''),
+      chars: Number(m.chars) || 0,
+      size_bytes: Number(m.size_bytes) || 0,
+      digest: String(m.digest || digest)
+    }));
+    return JSON.stringify(sanitized);
+  } catch (e) {
+    return null;
+  }
+}
+
 // ---------- one-time setup & multi-repo seed data ----------
 function setupTab(name) {
   const s = ss();
@@ -570,10 +606,9 @@ function doPost(e) {
       const repo = body.repo || 'sncf/default';
       const name = body.name || 'image';
       const tag = body.tag || 'latest';
-      const digest = body.digest || ('sha256:' + Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, ''));
       const author = body.author || 'anonymous';
       const rawChunks = body.chunks || [];
-      const maxChunkChars = body.max_chunk_chars || 30000;
+      const maxChunkChars = Math.min(Number(body.max_chunk_chars) || 30000, 32767);
 
       let chunkList = [];
       if (Array.isArray(rawChunks) && rawChunks.length > 0) {
@@ -602,17 +637,40 @@ function doPost(e) {
         return json({ error: 'no image content or chunks provided' });
       }
 
-      // Strict enforcement of cell character limit (Excel / Sheets cap)
+      // Strict enforcement of cell character limit (Excel 32,767 / Google Sheets 50,000 cap)
       for (let k = 0; k < chunkList.length; k++) {
         if (chunkList[k].data.length > 32767) {
           return json({ error: 'chunk character limit exceeded (max 32767 characters per cell)' });
         }
       }
 
-      const totalSize = body.size_bytes || chunkList.reduce((acc, c) => acc + (c.size_bytes || 0), 0);
+      // Reassemble full payload server-side and compute authoritative content-addressed SHA-256 digest
+      const reassembledPayload = chunkList.map(c => c.data).join('');
+      const computedDigest = computeSha256(reassembledPayload);
 
-      // Clean up previous chunks for this digest if re-pushing
+      // Verify client-provided digest if supplied, reject on tamper/mismatch
+      if (body.digest && String(body.digest).trim().toLowerCase() !== computedDigest.toLowerCase()) {
+        return json({ error: `digest mismatch: computed ${computedDigest} but received ${body.digest}` });
+      }
+
+      const digest = computedDigest;
+      const totalSize = Number(body.size_bytes) || chunkList.reduce((acc, c) => acc + (c.size_bytes || 0), 0);
+
+      // Look up registry to handle updating existing images and orphaned chunks
+      const registry = readTab('Registry');
+      let imageRecord = registry.find(r => r.repo === repo && r.name === name && r.tag === tag);
       let allChunks = readTab('RegistryChunks');
+
+      // If updating an existing image tag and its digest changed, clean up old orphaned chunks
+      if (imageRecord && imageRecord.digest && imageRecord.digest !== digest) {
+        const oldDigest = imageRecord.digest;
+        const isOldDigestUsed = registry.some(r => r.id !== imageRecord.id && r.digest === oldDigest);
+        if (!isOldDigestUsed) {
+          allChunks = allChunks.filter(c => c.digest !== oldDigest);
+        }
+      }
+
+      // Clean up previous chunks for this exact digest if re-pushing
       allChunks = allChunks.filter(c => c.digest !== digest);
 
       const chunkMap = [];
@@ -645,14 +703,15 @@ function doPost(e) {
       allChunks.push(...newChunkRows);
       writeTab('RegistryChunks', allChunks);
 
+      // Validate client-provided chunk_map if any, otherwise use server-constructed chunkMap
+      const validatedMap = validateChunkMap(body.chunk_map, chunkList.length, digest) || JSON.stringify(chunkMap);
+
       // Upsert Registry metadata
-      const registry = readTab('Registry');
-      let imageRecord = registry.find(r => r.repo === repo && r.name === name && r.tag === tag);
       if (imageRecord) {
         imageRecord.digest = digest;
         imageRecord.size_bytes = totalSize;
         imageRecord.chunk_count = chunkList.length;
-        imageRecord.chunk_map = typeof body.chunk_map === 'string' ? body.chunk_map : JSON.stringify(chunkMap);
+        imageRecord.chunk_map = validatedMap;
         imageRecord.author = author;
         imageRecord.updated_at = now;
       } else {
@@ -664,7 +723,7 @@ function doPost(e) {
           digest: digest,
           size_bytes: totalSize,
           chunk_count: chunkList.length,
-          chunk_map: typeof body.chunk_map === 'string' ? body.chunk_map : JSON.stringify(chunkMap),
+          chunk_map: validatedMap,
           author: author,
           created_at: now,
           updated_at: now
@@ -673,7 +732,7 @@ function doPost(e) {
       }
       writeTab('Registry', registry);
 
-      return json({ ok: true, image: imageRecord, chunk_count: chunkList.length });
+      return json({ ok: true, image: imageRecord, chunk_count: chunkList.length, digest: digest });
     }
 
     if (action === 'delete_image') {
