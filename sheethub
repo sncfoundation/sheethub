@@ -264,6 +264,7 @@ case "$cmd" in
         echo "📥 Pulling layer chunks from spreadsheet cells..." >&2
         res="$(api_get "$q")"
 
+        # shellcheck disable=SC2016
         node -e '
           const fs = require("fs");
           const crypto = require("crypto");
@@ -284,14 +285,14 @@ case "$cmd" in
           const calculatedDigest = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
 
           if (data.image && data.image.digest && calculatedDigest !== data.image.digest) {
-            console.error(`sheethub error: digest mismatch! expected ${data.image.digest}, got ${calculatedDigest}`);
+            console.error("sheethub error: digest mismatch! expected " + data.image.digest + ", got " + calculatedDigest);
             process.exit(1);
           }
 
           if (outfile) {
             fs.writeFileSync(outfile, buf);
-            console.error(`✅ Reassembled ${sortedChunks.length} cell chunks (${buf.length} bytes). Digest verified: ${calculatedDigest}`);
-            console.error(`💾 Layer written to: ${outfile}`);
+            console.error("✅ Reassembled " + sortedChunks.length + " cell chunks (" + buf.length + " bytes). Digest verified: " + calculatedDigest);
+            console.error("💾 Layer written to: " + outfile);
           } else {
             process.stdout.write(buf);
           }
