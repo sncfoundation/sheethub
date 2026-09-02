@@ -7,6 +7,10 @@
 <p align="center"><b>An all-in-one DevOps forge on a Google Sheet</b><br>
 A <a href="https://sncfoundation.github.io">Sheet-Native Computing Foundation</a> project &#183; analog of <b>GitLab / GitHub</b></p>
 
+<p align="center">
+  <a href="https://github.com/sncfoundation/sheethub/actions/workflows/ci.yml"><img src="https://github.com/sncfoundation/sheethub/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 ---
 
 SheetHub is an all-in-one DevOps forge whose data plane is a Google Sheet: source metadata, issues, merge requests, releases, users, and workload manifests, all in one workbook.

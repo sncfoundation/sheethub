@@ -29,7 +29,9 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
 [ -f "$here/.sheethub.env" ] && . "$here/.sheethub.env"
+# shellcheck source=/dev/null
 [ -f "$here/.skctl.env" ] && [ -z "${SHEETHUB_URL:-}" ] && [ -n "${WEBAPP_URL:-}" ] && SHEETHUB_URL="$WEBAPP_URL"
 SHEETHUB_URL="${SHEETHUB_URL:-http://localhost:8788/exec}"
 TOKEN="${TOKEN:-CHANGE_ME_super_secret}"
