@@ -31,18 +31,35 @@ const TABS = {
 // ---------- generic sheet <-> objects ----------
 function ss() { return SpreadsheetApp.getActiveSpreadsheet(); }
 
+function sanitizeCell(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'number' || typeof val === 'boolean') return val;
+  const str = String(val);
+  if (str.length > 0 && (str[0] === '=' || str[0] === '+' || str[0] === '-' || str[0] === '@')) {
+    return "'" + str;
+  }
+  return str;
+}
+
+function unescapeCell(val) {
+  if (typeof val === 'string' && val.length > 1 && val[0] === "'" && (val[1] === '=' || val[1] === '+' || val[1] === '-' || val[1] === '@')) {
+    return val.substring(1);
+  }
+  return val;
+}
+
 function readTab(name) {
   const s = ss();
   const sh = s.getSheetByName(name);
   if (!sh) return [];
   const rng = sh.getDataRange().getValues();
-  if (!rng || rng.length < 2) return [];
+  if (rng.length < 2) return [];
   const header = rng.shift();
   return rng
     .filter(r => String(r[0]).trim() !== '')
     .map(row => {
       const o = {};
-      header.forEach((h, i) => { o[h] = row[i]; });
+      header.forEach((h, i) => { o[h] = unescapeCell(row[i]); });
       return o;
     });
 }
@@ -56,7 +73,7 @@ function writeTab(name, objects) {
     sh.setFrozenRows(1);
   }
   const header = TABS[name];
-  const rows = objects.map(o => header.map(h => (o[h] === undefined || o[h] === null) ? '' : o[h]));
+  const rows = objects.map(o => header.map(h => sanitizeCell(o[h])));
   const lastRow = sh.getLastRow();
   if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, header.length).clearContent();
   if (rows.length) sh.getRange(2, 1, rows.length, header.length).setValues(rows);
@@ -67,20 +84,26 @@ function shortId() {
 }
 
 function computeSha256(base64Str) {
-  try {
-    const bytes = Utilities.base64Decode(base64Str);
-    const rawHash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes);
-    let hex = '';
-    for (let i = 0; i < rawHash.length; i++) {
-      let byteVal = rawHash[i];
-      if (byteVal < 0) byteVal += 256;
-      const byteHex = byteVal.toString(16);
-      hex += byteHex.length === 1 ? '0' + byteHex : byteHex;
-    }
-    return 'sha256:' + hex;
-  } catch (err) {
-    return 'sha256:unknown';
+  if (!base64Str || typeof base64Str !== 'string') {
+    throw new Error('invalid or empty base64 payload');
   }
+  const trimmed = base64Str.trim();
+  if (trimmed.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) {
+    throw new Error('invalid base64 character or padding');
+  }
+  const bytes = Utilities.base64Decode(trimmed);
+  if (!bytes || !bytes.length) {
+    throw new Error('failed to decode base64 bytes');
+  }
+  const rawHash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes);
+  let hex = '';
+  for (let i = 0; i < rawHash.length; i++) {
+    let byteVal = rawHash[i];
+    if (byteVal < 0) byteVal += 256;
+    const byteHex = byteVal.toString(16);
+    hex += byteHex.length === 1 ? '0' + byteHex : byteHex;
+  }
+  return 'sha256:' + hex;
 }
 
 function validateChunkMap(input, chunkCount, digest) {
@@ -350,11 +373,11 @@ function setup() {
   // Seed Container Registry
   const registry = readTab('Registry');
   if (!registry.length) {
-    const whoamiDigest = 'sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069';
-    const ingressDigest = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
-
     const sampleChunk1 = 'H4sICN8+v2YCA2hlbGxvLXdlYi50YXIA7Z1rc9s2Ese/SpX7Yd25K3s2d2U6dZ3Ex04yN5P6ykmk5MskMRdFkdT8eAAYgCIeEtAiyfG0Y4kEQGDx211gsViA/y8vLy/n51+vrq6evX/26sWzV5eXlz+ev/rpyfPnL1++ePnq6cvnLy9eXj5//vzps6eXl6+ev3z+9OXzV49ffHn16tWzn6/+/u1/Hj368/r/vv3vf3/9n4e3/37996+/';
     const sampleChunk2 = 'mZzO5vP56eX5y/nJ9Ozn57Pz17Pz2cvz19PT6dnz8/lsNpufTk/PTmZn569Onr+cnrz86eTp2dlp+t1/AAAA///817t0wAAA';
+
+    const whoamiDigest = computeSha256(sampleChunk1 + sampleChunk2);
+    const ingressDigest = computeSha256(sampleChunk1);
 
     writeTab('Registry', [
       {
@@ -363,11 +386,11 @@ function setup() {
         name: 'traefik/whoami',
         tag: 'latest',
         digest: whoamiDigest,
-        size_bytes: 49152,
+        size_bytes: 258,
         chunk_count: 2,
         chunk_map: JSON.stringify([
-          { index: 0, sheet: 'RegistryChunks', cell: 'D2', chars: sampleChunk1.length, size_bytes: 24576, digest: whoamiDigest },
-          { index: 1, sheet: 'RegistryChunks', cell: 'D3', chars: sampleChunk2.length, size_bytes: 24576, digest: whoamiDigest }
+          { index: 0, sheet: 'RegistryChunks', cell: 'D2', chars: sampleChunk1.length, size_bytes: 186, digest: whoamiDigest },
+          { index: 1, sheet: 'RegistryChunks', cell: 'D3', chars: sampleChunk2.length, size_bytes: 72, digest: whoamiDigest }
         ]),
         author: 'prateeekbuilds',
         created_at: now,
@@ -379,10 +402,10 @@ function setup() {
         name: 'ingress-router',
         tag: 'v2.10',
         digest: ingressDigest,
-        size_bytes: 32768,
+        size_bytes: 186,
         chunk_count: 1,
         chunk_map: JSON.stringify([
-          { index: 0, sheet: 'RegistryChunks', cell: 'D4', chars: sampleChunk1.length, size_bytes: 32768, digest: ingressDigest }
+          { index: 0, sheet: 'RegistryChunks', cell: 'D4', chars: sampleChunk1.length, size_bytes: 186, digest: ingressDigest }
         ]),
         author: 'tym83',
         created_at: now,
@@ -391,9 +414,9 @@ function setup() {
     ]);
 
     writeTab('RegistryChunks', [
-      { id: 'chk-001', digest: whoamiDigest, chunk_index: 0, chunk_data: sampleChunk1, size_bytes: 24576, created_at: now },
-      { id: 'chk-002', digest: whoamiDigest, chunk_index: 1, chunk_data: sampleChunk2, size_bytes: 24576, created_at: now },
-      { id: 'chk-101', digest: ingressDigest, chunk_index: 0, chunk_data: sampleChunk1, size_bytes: 32768, created_at: now },
+      { id: 'chk-001', digest: whoamiDigest, chunk_index: 0, chunk_data: sampleChunk1, size_bytes: 186, created_at: now },
+      { id: 'chk-002', digest: whoamiDigest, chunk_index: 1, chunk_data: sampleChunk2, size_bytes: 72, created_at: now },
+      { id: 'chk-101', digest: ingressDigest, chunk_index: 0, chunk_data: sampleChunk1, size_bytes: 186, created_at: now },
     ]);
   }
 }
@@ -455,7 +478,11 @@ function doGet(e) {
   }
 
   if (p.id) {
-    items = items.filter(it => String(it.id) === String(p.id) || String(it.number) === String(p.id) || String(it.tag) === String(p.id) || String(it.digest) === String(p.id));
+    if (tab === 'Registry') {
+      items = items.filter(it => String(it.id) === String(p.id) || String(it.tag) === String(p.id) || String(it.digest) === String(p.id));
+    } else {
+      items = items.filter(it => String(it.id) === String(p.id) || String(it.number) === String(p.id));
+    }
   }
 
   // Handle pull query (fetch image + ordered chunks)
@@ -489,11 +516,11 @@ function doPost(e) {
     const now = new Date().toISOString();
 
     if (action === 'create_issue') {
-      const repo = body.repo || 'default';
+      const repo = body.repo || 'sncf/default';
       const issues = readTab('Issues');
       const repoIssues = issues.filter(i => i.repo === repo);
       const nextNum = repoIssues.length ? Math.max(...repoIssues.map(i => Number(i.number) || 0)) + 1 : 1;
-      const issue = {
+      const iss = {
         id: 'iss-' + shortId(),
         repo: repo,
         number: nextNum,
@@ -501,13 +528,13 @@ function doPost(e) {
         body: body.body || '',
         author: body.author || 'anonymous',
         state: 'open',
-        labels: body.labels || 'issue',
+        labels: body.labels || 'enhancement',
         created_at: now,
         updated_at: now
       };
-      issues.push(issue);
+      issues.push(iss);
       writeTab('Issues', issues);
-      return json({ ok: true, issue: issue });
+      return json({ ok: true, issue: iss });
     }
 
     if (action === 'create_mr') {
@@ -637,6 +664,17 @@ function doPost(e) {
         return json({ error: 'no image content or chunks provided' });
       }
 
+      // Reject empty / zero-byte total content
+      const totalChars = chunkList.reduce((acc, c) => acc + (c.data ? c.data.length : 0), 0);
+      if (totalChars === 0) {
+        return json({ error: 'cannot push empty / zero-byte layer' });
+      }
+
+      // Cap total chunks and payload to prevent sheet row/cell exhaustion
+      if (chunkList.length > 500 || (body.size_bytes && Number(body.size_bytes) > 50 * 1024 * 1024)) {
+        return json({ error: 'payload exceeds maximum allowed registry layer size (max 500 chunks / 50MB)' });
+      }
+
       // Strict enforcement of cell character limit (Excel 32,767 / Google Sheets 50,000 cap)
       for (let k = 0; k < chunkList.length; k++) {
         if (chunkList[k].data.length > 32767) {
@@ -646,7 +684,12 @@ function doPost(e) {
 
       // Reassemble full payload server-side and compute authoritative content-addressed SHA-256 digest
       const reassembledPayload = chunkList.map(c => c.data).join('');
-      const computedDigest = computeSha256(reassembledPayload);
+      let computedDigest;
+      try {
+        computedDigest = computeSha256(reassembledPayload);
+      } catch (err) {
+        return json({ error: 'invalid base64 payload: failed to decode and compute SHA-256' });
+      }
 
       // Verify client-provided digest if supplied, reject on tamper/mismatch
       if (body.digest && String(body.digest).trim().toLowerCase() !== computedDigest.toLowerCase()) {
@@ -747,10 +790,13 @@ function doPost(e) {
       const removed = registry.splice(targetIdx, 1)[0];
       writeTab('Registry', registry);
 
-      // Clean up chunks from chunk sheet
-      let allChunks = readTab('RegistryChunks');
-      allChunks = allChunks.filter(c => c.digest !== removed.digest);
-      writeTab('RegistryChunks', allChunks);
+      // Clean up chunks from chunk sheet ONLY IF no other image references this digest
+      const isDigestUsedElsewhere = registry.some(r => r.digest === removed.digest);
+      if (!isDigestUsedElsewhere) {
+        let allChunks = readTab('RegistryChunks');
+        allChunks = allChunks.filter(c => c.digest !== removed.digest);
+        writeTab('RegistryChunks', allChunks);
+      }
 
       return json({ ok: true, deleted: removed });
     }

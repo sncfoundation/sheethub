@@ -209,16 +209,20 @@ case "$cmd" in
         [[ "$img_spec" == *:* ]] && tag="${img_spec#*:}"
 
         echo "📦 Preparing container layer for spreadsheet storage..."
-        payload="$(node -e '
+        payload="$(TOKEN="$TOKEN" node -e '
           const fs = require("fs");
           const crypto = require("crypto");
           const file = process.argv[1];
           const repo = process.argv[2];
           const name = process.argv[3];
           const tag = process.argv[4];
-          const token = process.argv[5];
+          const token = process.env.TOKEN;
 
           const buf = fs.readFileSync(file);
+          if (buf.length === 0) {
+            console.error("sheethub error: cannot push empty / zero-byte layer");
+            process.exit(1);
+          }
           const digest = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
           const b64 = buf.toString("base64");
           const maxChunk = 30000;
@@ -239,7 +243,7 @@ case "$cmd" in
             author: process.env.USER || "sheethub-cli"
           };
           process.stdout.write(JSON.stringify(out));
-        ' "$file" "$repo" "$name" "$tag" "$TOKEN")"
+        ' "$file" "$repo" "$name" "$tag")"
 
         echo "🚀 Sharding base64 across spreadsheet cell range (max 30,000 chars/cell)..."
         res="$(api_post "$payload")"
@@ -262,41 +266,53 @@ case "$cmd" in
         fi
 
         echo "📥 Pulling layer chunks from spreadsheet cells..." >&2
-        res="$(api_get "$q")"
 
+        # Stream API response via stdin to avoid ARG_MAX issues on multi-megabyte layers
         # shellcheck disable=SC2016
-        node -e '
+        api_get "$q" | node -e '
           const fs = require("fs");
           const crypto = require("crypto");
-          const data = JSON.parse(process.argv[1]);
-          const outfile = process.argv[2];
+          const outfile = process.argv[1];
 
-          if (!data || !data.ok || !data.chunks) {
-            console.error("sheethub error: failed to retrieve layer chunks");
-            process.exit(1);
-          }
+          let input = "";
+          process.stdin.setEncoding("utf8");
+          process.stdin.on("data", chunk => { input += chunk; });
+          process.stdin.on("end", () => {
+            let data;
+            try {
+              data = JSON.parse(input);
+            } catch (e) {
+              console.error("sheethub error: failed to parse JSON response from server");
+              process.exit(1);
+            }
 
-          const sortedChunks = data.chunks
-            .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index))
-            .map(c => c.chunk_data);
+            if (!data || !data.ok || !data.chunks) {
+              console.error("sheethub error: failed to retrieve layer chunks" + (data && data.error ? ": " + data.error : ""));
+              process.exit(1);
+            }
 
-          const fullBase64 = sortedChunks.join("");
-          const buf = Buffer.from(fullBase64, "base64");
-          const calculatedDigest = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
+            const sortedChunks = data.chunks
+              .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index))
+              .map(c => c.chunk_data);
 
-          if (data.image && data.image.digest && calculatedDigest !== data.image.digest) {
-            console.error("sheethub error: digest mismatch! expected " + data.image.digest + ", got " + calculatedDigest);
-            process.exit(1);
-          }
+            const fullBase64 = sortedChunks.join("");
+            const buf = Buffer.from(fullBase64, "base64");
+            const calculatedDigest = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
 
-          if (outfile) {
-            fs.writeFileSync(outfile, buf);
-            console.error("✅ Reassembled " + sortedChunks.length + " cell chunks (" + buf.length + " bytes). Digest verified: " + calculatedDigest);
-            console.error("💾 Layer written to: " + outfile);
-          } else {
-            process.stdout.write(buf);
-          }
-        ' "$res" "$outfile"
+            if (data.image && data.image.digest && calculatedDigest !== data.image.digest) {
+              console.error("sheethub error: digest mismatch! expected " + data.image.digest + ", got " + calculatedDigest);
+              process.exit(1);
+            }
+
+            if (outfile) {
+              fs.writeFileSync(outfile, buf);
+              console.error("✅ Reassembled " + sortedChunks.length + " cell chunks (" + buf.length + " bytes). Digest verified: " + calculatedDigest);
+              console.error("💾 Layer written to: " + outfile);
+            } else {
+              process.stdout.write(buf);
+            }
+          });
+        ' "$outfile"
         ;;
       delete)
         repo="${1:?usage: sheethub registry delete <repo> <name:tag_or_digest>}"

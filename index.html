@@ -1399,7 +1399,7 @@
       });
     }
 
-    function downloadLayer(imageId) {
+    async function downloadLayer(imageId) {
       const img = STATE.Registry.find(r => r.id === imageId);
       if (!img) return;
 
@@ -1420,6 +1420,15 @@
           byteNumbers[i] = byteCharacters.charCodeAt(i);
         }
         const byteArray = new Uint8Array(byteNumbers);
+
+        // Verify SHA-256 digest in browser before saving
+        const hashBuf = await crypto.subtle.digest('SHA-256', byteArray);
+        const computedDigest = 'sha256:' + Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        if (img.digest && computedDigest !== img.digest) {
+          alert(`Layer integrity error: digest mismatch!\nExpected: ${img.digest}\nComputed: ${computedDigest}\nDownload aborted.`);
+          return;
+        }
+
         const blob = new Blob([byteArray], { type: 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
