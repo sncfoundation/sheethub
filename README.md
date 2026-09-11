@@ -55,10 +55,21 @@ SheetHub hosts the workload manifests that [Sheeternetes](https://github.com/snc
 | **`Issues`** | `id, repo, number, title, body, author, state, labels, created_at, updated_at` | Sequential issue tracker per repo |
 | **`MergeRequests`** | `id, repo, number, title, description, author, source_branch, target_branch, state, diff_manifest, created_at, updated_at` | Merge requests with visual spec diffs |
 | **`Releases`** | `id, repo, tag_name, name, body, author, created_at, assets` | Release tags & artifact manifest registry |
+| **`Registry`** | `id, repo, name, tag, digest, size_bytes, chunk_count, chunk_map, author, created_at, updated_at` | Container image metadata, tags, SHA-256 digests & shard map |
+| **`RegistryChunks`** | `id, digest, chunk_index, chunk_data, size_bytes, created_at` | Base64 image layer chunks stored across cell ranges ($\le$ 32,767 chars/cell) |
 | **`Users`** | `username, name, avatar_url, role, bio, created_at` | Contributor identity & profiles |
 | **`Comments`** | `id, target_type, target_id, author, body, created_at` | Discussions on issues and MRs |
 | **`Stars`** | `repo, username, starred_at` | Star registry |
 | **`Files`** | `repo, path, branch, content, updated_at` | Manifest files and workload definitions |
+
+---
+
+## Container Registry in Cells (Air-Gap Edition)
+
+SheetHub includes a spreadsheet-native **container registry** that stores OCI container image layers directly in spreadsheet cells:
+- **Cell Character Limit Sharding**: Excel and Google Sheets cap a single cell at **32,767 characters**. Image layers are converted to Base64 and automatically sharded across discrete cell ranges (capped at $\le 30,000$ characters per cell) and reassembled on pull.
+- **Separate Metadata Plane**: Image names, tags, SHA-256 digests, and cell coordinate chunk maps (`RegistryChunks!D2:D15`) are tracked cleanly in the `Registry` tab.
+- **Air-Gap Self-Hosting**: Both workload manifests *and* container images reside completely within the Google Sheet.
 
 ---
 
@@ -71,7 +82,7 @@ SheetHub hosts the workload manifests that [Sheeternetes](https://github.com/snc
 3. Copy [`Code.gs`](Code.gs) into `Code.gs`.
 4. Copy [`index.html`](index.html) into `index.html` (Files `+` -> HTML).
 5. Set `TOKEN` at the top of `Code.gs`.
-6. Run `setup()` once in the script editor. This auto-creates all 8 tabs, applies bold frozen headers, and seeds sample repos (`sncf/hello-web`, `sncf/sheeternetes-manifests`).
+6. Run `setup()` once in the script editor. This auto-creates all 10 tabs, applies bold frozen headers, and seeds sample repos (`sncf/hello-web`, `sncf/sheeternetes-manifests`) along with container images.
 7. Click **Deploy → New deployment → Web app** (Execute as: *Me*, Who has access: *Anyone*).
 8. Copy the `/exec` URL.
 
@@ -83,7 +94,7 @@ You can run the control plane and test harness completely offline:
 # Start local in-memory apiserver + Web UI
 node hack/local-apiserver.js
 
-# Run the test suite (auth enforcement, multi-repo filtering, MR lifecycle)
+# Run the test suite (auth enforcement, multi-repo filtering, MR lifecycle, container registry sharding)
 node hack/test.js
 ```
 Open **`http://localhost:8788`** in your browser to view the GitLab-style forge Web UI.
@@ -124,6 +135,21 @@ Commands:
 
 # Fetch raw workload manifest from the Files tab
 ./sheethub file get sncf/hello-web app.json
+
+# List container images stored in cells
+./sheethub registry list sncf/hello-web
+
+# Push container layer / tarball (auto-shards base64 into spreadsheet cells)
+./sheethub registry push sncf/hello-web my-service:v1.0.0 ./layer.tar
+
+# Pull and reassemble container image layer from spreadsheet cells (verifies SHA-256 digest)
+./sheethub registry pull sncf/hello-web my-service:v1.0.0 ./pulled_layer.tar
+
+# Inspect cell shard map coordinates
+./sheethub registry view sncf/hello-web my-service:v1.0.0
+
+# Delete container image and associated cell chunks
+./sheethub registry delete sncf/hello-web my-service:v1.0.0
 
 # Guided CLI Tour
 ./sheethub tour

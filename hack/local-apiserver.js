@@ -58,14 +58,16 @@ function makeSheetApi(sheet) {
 }
 
 const store = {
-  Repos:         makeSheet(['name', 'description', 'default_branch', 'visibility', 'stars_count', 'created_at', 'updated_at']),
-  Issues:        makeSheet(['id', 'repo', 'number', 'title', 'body', 'author', 'state', 'labels', 'created_at', 'updated_at']),
-  MergeRequests: makeSheet(['id', 'repo', 'number', 'title', 'description', 'author', 'source_branch', 'target_branch', 'state', 'diff_manifest', 'created_at', 'updated_at']),
-  Releases:      makeSheet(['id', 'repo', 'tag_name', 'name', 'body', 'author', 'created_at', 'assets']),
-  Users:         makeSheet(['username', 'name', 'avatar_url', 'role', 'bio', 'created_at']),
-  Comments:      makeSheet(['id', 'target_type', 'target_id', 'author', 'body', 'created_at']),
-  Stars:         makeSheet(['repo', 'username', 'starred_at']),
-  Files:         makeSheet(['repo', 'path', 'branch', 'content', 'updated_at']),
+  Repos:          makeSheet(['name', 'description', 'default_branch', 'visibility', 'stars_count', 'created_at', 'updated_at']),
+  Issues:         makeSheet(['id', 'repo', 'number', 'title', 'body', 'author', 'state', 'labels', 'created_at', 'updated_at']),
+  MergeRequests:  makeSheet(['id', 'repo', 'number', 'title', 'description', 'author', 'source_branch', 'target_branch', 'state', 'diff_manifest', 'created_at', 'updated_at']),
+  Releases:       makeSheet(['id', 'repo', 'tag_name', 'name', 'body', 'author', 'created_at', 'assets']),
+  Users:          makeSheet(['username', 'name', 'avatar_url', 'role', 'bio', 'created_at']),
+  Comments:       makeSheet(['id', 'target_type', 'target_id', 'author', 'body', 'created_at']),
+  Stars:          makeSheet(['repo', 'username', 'starred_at']),
+  Files:          makeSheet(['repo', 'path', 'branch', 'content', 'updated_at']),
+  Registry:       makeSheet(['id', 'repo', 'name', 'tag', 'digest', 'size_bytes', 'chunk_count', 'chunk_map', 'author', 'created_at', 'updated_at']),
+  RegistryChunks: makeSheet(['id', 'digest', 'chunk_index', 'chunk_data', 'size_bytes', 'created_at']),
 };
 
 const SpreadsheetApp = {
@@ -80,7 +82,17 @@ const SpreadsheetApp = {
 };
 
 let uuidN = 0;
-const Utilities = { getUuid: () => (++uuidN).toString(36).split('').reverse().join('').padEnd(8, '0') };
+const crypto = require('crypto');
+const Utilities = {
+  getUuid: () => (++uuidN).toString(36).split('').reverse().join('').padEnd(8, '0'),
+  DigestAlgorithm: { SHA_256: 'SHA_256' },
+  base64Decode: (str) => Array.from(Buffer.from(str, 'base64')),
+  computeDigest: (algo, bytes) => {
+    const buf = Buffer.from(bytes);
+    const hashBuf = crypto.createHash('sha256').update(buf).digest();
+    return Array.from(new Int8Array(hashBuf.buffer, hashBuf.byteOffset, hashBuf.length));
+  }
+};
 const LockService = { getScriptLock: () => ({ tryLock() { return true; }, releaseLock() {} }) };
 const ContentService = {
   MimeType: { JSON: 'json' },
