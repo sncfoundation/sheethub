@@ -961,8 +961,10 @@
         .replace(/'/g, '&#039;');
     }
 
-    const whoamiDigest = 'sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069';
-    const ingressDigest = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    // Digests of the decoded seed chunks (must match what Code.gs computes and what
+    // downloadLayer recomputes: sha256 over base64-decode(chunk1[+chunk2])).
+    const whoamiDigest = 'sha256:ea58867ced6e1e0e863127bbc80da219c35baf1621ce475e0c7e2261631844cf';
+    const ingressDigest = 'sha256:66a2663c742f0673fbbcb8e723a31faaeeeb2e282e4408d1cddfbb30632057be';
 
     const sampleChunk1 = 'H4sICN8+v2YCA2hlbGxvLXdlYi50YXIA7Z1rc9s2Ese/SpX7Yd25K3s2d2U6dZ3Ex04yN5P6ykmk5MskMRdFkdT8eAAYgCIeEtAiyfG0Y4kEQGDx211gsViA/y8vLy/n51+vrq6evX/26sWzV5eXlz+ev/rpyfPnL1++ePnq6cvnLy9eXj5//vzps6eXl6+ev3z+9OXzV49ffHn16tWzn6/+/u1/Hj368/r/vv3vf3/9n4e3/37996+/';
     const sampleChunk2 = 'mZzO5vP56eX5y/nJ9Ozn57Pz17Pz2cvz19PT6dnz8/lsNpufTk/PTmZn569Onr+cnrz86eTp2dlp+t1/AAAA///817t0wAAA';

@@ -532,6 +532,19 @@ check('image deleted from Registry metadata tab', !registryAfterDelete.some(r =>
 const chunksAfterDelete = api.readTab('RegistryChunks');
 check('associated chunks deleted from RegistryChunks tab', !chunksAfterDelete.some(c => c.digest === testDigest), chunksAfterDelete.length);
 
+// ---- Regression: index.html seed digests must match the hash of their own seed chunks ----
+// (guards against UI/backend digest drift, which silently breaks downloadLayer's integrity check)
+console.log('\n== I: UI seed digest integrity ==');
+const ui = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const grab = (re) => (ui.match(re) || [])[1];
+const uiWhoami = grab(/whoamiDigest\s*=\s*'([^']+)'/);
+const uiIngress = grab(/ingressDigest\s*=\s*'([^']+)'/);
+const uiC1 = grab(/sampleChunk1\s*=\s*'([^']+)'/);
+const uiC2 = grab(/sampleChunk2\s*=\s*'([^']+)'/);
+const sha = (b64) => 'sha256:' + crypto.createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex');
+check('index.html whoami digest matches sha256(decode(chunk1+chunk2))', uiWhoami === sha(uiC1 + uiC2), { uiWhoami, expected: sha(uiC1 + uiC2) });
+check('index.html ingress digest matches sha256(decode(chunk1))', uiIngress === sha(uiC1), { uiIngress, expected: sha(uiC1) });
+
 console.log(`\n==== SheetHub Test Results: ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);
 

@@ -35,7 +35,9 @@ function sanitizeCell(val) {
   if (val === null || val === undefined) return '';
   if (typeof val === 'number' || typeof val === 'boolean') return val;
   const str = String(val);
-  if (str.length > 0 && (str[0] === '=' || str[0] === '+' || str[0] === '-' || str[0] === '@')) {
+  // Neutralize spreadsheet formula/CSV injection: a leading formula trigger, optionally
+  // preceded by whitespace/TAB/CR (which spreadsheets and CSV importers strip before parsing).
+  if (/^[\s\t\r\n]*[=+\-@]/.test(str)) {
     return "'" + str;
   }
   return str;
@@ -670,8 +672,11 @@ function doPost(e) {
         return json({ error: 'cannot push empty / zero-byte layer' });
       }
 
-      // Cap total chunks and payload to prevent sheet row/cell exhaustion
-      if (chunkList.length > 500 || (body.size_bytes && Number(body.size_bytes) > 50 * 1024 * 1024)) {
+      // Cap total chunks and payload to prevent sheet row/cell exhaustion.
+      // Size is measured server-side from the actual base64 (~3/4 decoded bytes),
+      // never trusting the client-supplied size_bytes which can be omitted to bypass the cap.
+      const serverBytes = Math.floor(totalChars * 0.75);
+      if (chunkList.length > 500 || serverBytes > 50 * 1024 * 1024) {
         return json({ error: 'payload exceeds maximum allowed registry layer size (max 500 chunks / 50MB)' });
       }
 
@@ -780,9 +785,11 @@ function doPost(e) {
 
     if (action === 'delete_image') {
       const registry = readTab('Registry');
+      // A digest-only delete is scoped to body.repo so it can't remove a same-digest
+      // image belonging to another repo.
       const targetIdx = registry.findIndex(r =>
         (body.id && r.id === body.id) ||
-        (body.digest && r.digest === body.digest) ||
+        (body.digest && r.digest === body.digest && (!body.repo || r.repo === body.repo)) ||
         (body.repo && r.repo === body.repo && (r.name + ':' + r.tag === body.image || (r.name === body.name && r.tag === body.tag)))
       );
 
