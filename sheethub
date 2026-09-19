@@ -99,12 +99,12 @@ case "$cmd" in
         ;;
       registry|images|image)
         repo="${2:-}"
-        q="kind=registry"
+        q="kind=images"
         [ -n "$repo" ] && q="$q&repo=$(urlencode "$repo")"
-        api_get "$q" | jq -r '["REPO","IMAGE","TAG","DIGEST","SIZE","CHUNKS","UPDATED"], (.items[]|[.repo,.name,.tag,(.digest[0:19] + "..."),((.size_bytes|tostring) + " B"),((.chunk_count|tostring) + " cells"),.updated_at]) | @tsv' | column -t -s $'\t'
+        api_get "$q" | jq -r '["REPO","IMAGE","TAG","CONFIG DIGEST","SIZE","LAYERS","CREATED"], (.items[]|[.repo,.name,(.tag // (.name|split(":")[1] // "latest")),(.digest[0:19] + "..."),(((.size // .size_bytes)|tostring) + " B"),((.layers[0:19] // ((.chunk_count|tostring) + " cells")) + "..."),(.created // .created_at // .updated_at)]) | @tsv' | column -t -s $'\t'
         ;;
       *)
-        echo "unknown kind: $kind (expected: repos, issues, mrs, releases, files, registry)" >&2; exit 1
+        echo "unknown kind: $kind (expected: repos, issues, mrs, releases, files, images)" >&2; exit 1
         ;;
     esac
     ;;
@@ -184,23 +184,25 @@ case "$cmd" in
     sub="${1:-list}"; shift || true
     case "$sub" in
       list)
-        "$0" get registry "$@"
+        "$0" get images "$@"
         ;;
       view)
         repo="${1:?usage: sheethub registry view <repo> <name:tag_or_digest>}"
         img_spec="${2:?missing image name:tag or digest}"
+        img_spec="${img_spec#sicf:}"
         if [[ "$img_spec" == sha256:* ]]; then
-          api_get "kind=registry&repo=$(urlencode "$repo")&digest=$(urlencode "$img_spec")" | jq '.items[0] // {error: "image not found"}'
+          api_get "kind=images&repo=$(urlencode "$repo")&digest=$(urlencode "$img_spec")" | jq '.items[0] // {error: "image not found"}'
         else
           name="${img_spec%%:*}"
           tag="latest"
           [[ "$img_spec" == *:* ]] && tag="${img_spec#*:}"
-          api_get "kind=registry&repo=$(urlencode "$repo")&name=$(urlencode "$name")&tag=$(urlencode "$tag")" | jq '.items[0] // {error: "image not found"}'
+          api_get "kind=images&repo=$(urlencode "$repo")&name=$(urlencode "$name")&tag=$(urlencode "$tag")" | jq '.items[0] // {error: "image not found"}'
         fi
         ;;
       push)
         repo="${1:?usage: sheethub registry push <repo> <name:tag> <local_file_or_image_tar>}"
         img_spec="${2:?missing image name:tag}"
+        img_spec="${img_spec#sicf:}"
         file="${3:?missing local file}"
         [ -f "$file" ] || { echo "sheethub error: file not found: $file" >&2; exit 1; }
 
@@ -208,7 +210,7 @@ case "$cmd" in
         tag="latest"
         [[ "$img_spec" == *:* ]] && tag="${img_spec#*:}"
 
-        echo "📦 Preparing container layer for spreadsheet storage..."
+        echo "📦 Preparing SICF container image & layers for spreadsheet storage..."
         payload="$(TOKEN="$TOKEN" node -e '
           const fs = require("fs");
           const crypto = require("crypto");
@@ -223,7 +225,7 @@ case "$cmd" in
             console.error("sheethub error: cannot push empty / zero-byte layer");
             process.exit(1);
           }
-          const digest = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
+          const layerDigest = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
           const b64 = buf.toString("base64");
           const maxChunk = 30000;
           const chunks = [];
@@ -231,41 +233,62 @@ case "$cmd" in
             chunks.push(b64.substring(i, i + maxChunk));
           }
 
+          const ociConfig = {
+            architecture: "amd64",
+            os: "linux",
+            config: {
+              Env: ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+              Cmd: [name]
+            },
+            rootfs: {
+              type: "layers",
+              diff_ids: [layerDigest]
+            }
+          };
+
           const out = {
             token: token,
             action: "push_image",
             repo: repo,
             name: name,
             tag: tag,
-            digest: digest,
+            config: ociConfig,
+            layers: [
+              {
+                digest: layerDigest,
+                media_type: "application/vnd.oci.image.layer.v1.tar",
+                size_bytes: buf.length,
+                chunks: chunks
+              }
+            ],
             size_bytes: buf.length,
-            chunks: chunks,
             author: process.env.USER || "sheethub-cli"
           };
           process.stdout.write(JSON.stringify(out));
         ' "$file" "$repo" "$name" "$tag")"
 
-        echo "🚀 Sharding base64 across spreadsheet cell range (max 30,000 chars/cell)..."
+        echo "🚀 Sharding base64 across spreadsheet cell range (max 30,000 chars/cell in Layers tab)..."
         res="$(api_post "$payload")"
         echo "$res" | jq .
-        echo "✅ Image $name:$tag successfully pushed and sharded into cells!"
+        echo "✅ SICF Image $name:$tag successfully pushed and sharded into cells!"
         ;;
       pull)
         repo="${1:?usage: sheethub registry pull <repo> <name:tag_or_digest> [output_file]}"
         img_spec="${2:?missing image name:tag or digest}"
         outfile="${3:-}"
 
+        clean_spec="${img_spec#sicf:}"
         q="kind=registry_pull&repo=$(urlencode "$repo")"
-        if [[ "$img_spec" == sha256:* ]]; then
-          q="$q&digest=$(urlencode "$img_spec")"
+        if [[ "$clean_spec" == sha256:* ]]; then
+          q="$q&digest=$(urlencode "$clean_spec")"
         else
-          name="${img_spec%%:*}"
+          name="${clean_spec%%:*}"
           tag="latest"
-          [[ "$img_spec" == *:* ]] && tag="${img_spec#*:}"
+          [[ "$clean_spec" == *:* ]] && tag="${clean_spec#*:}"
           q="$q&name=$(urlencode "$name")&tag=$(urlencode "$tag")"
         fi
 
-        echo "📥 Pulling layer chunks from spreadsheet cells..." >&2
+        echo "📥 Pulling SICF layer chunks from spreadsheet cells..." >&2
 
         # Stream API response via stdin to avoid ARG_MAX issues on multi-megabyte layers
         # shellcheck disable=SC2016
@@ -286,21 +309,22 @@ case "$cmd" in
               process.exit(1);
             }
 
-            if (!data || !data.ok || !data.chunks) {
+            if (!data || !data.ok || (!data.chunks && !data.layers)) {
               console.error("sheethub error: failed to retrieve layer chunks" + (data && data.error ? ": " + data.error : ""));
               process.exit(1);
             }
 
-            const sortedChunks = data.chunks
-              .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index))
-              .map(c => c.chunk_data);
+            const chunks = data.chunks || (data.layers && data.layers[0] && data.layers[0].chunks) || [];
+            const sortedChunks = chunks
+              .sort((a, b) => Number(a.ordinal !== undefined ? a.ordinal : a.chunk_index) - Number(b.ordinal !== undefined ? b.ordinal : b.chunk_index))
+              .map(c => c.data || c.chunk_data);
 
             const fullBase64 = sortedChunks.join("");
             const buf = Buffer.from(fullBase64, "base64");
             const calculatedDigest = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
 
-            if (data.image && data.image.digest && calculatedDigest !== data.image.digest) {
-              console.error("sheethub error: digest mismatch! expected " + data.image.digest + ", got " + calculatedDigest);
+            if (data.image && data.image.layers && !data.image.layers.includes(calculatedDigest) && data.image.digest && calculatedDigest !== data.image.digest) {
+              console.error("sheethub error: digest mismatch! expected " + (data.image.layers || data.image.digest) + ", got " + calculatedDigest);
               process.exit(1);
             }
 
@@ -317,6 +341,7 @@ case "$cmd" in
       delete)
         repo="${1:?usage: sheethub registry delete <repo> <name:tag_or_digest>}"
         img_spec="${2:?missing image name:tag or digest}"
+        img_spec="${img_spec#sicf:}"
         if [[ "$img_spec" == sha256:* ]]; then
           api_post "$(jq -n --arg t "$TOKEN" --arg r "$repo" --arg d "$img_spec" '{token:$t, action:"delete_image", repo:$r, digest:$d}')" | jq .
         else

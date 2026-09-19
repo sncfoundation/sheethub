@@ -812,21 +812,19 @@
       <div class="card">
         <div class="card-header">
           <div style="display:flex; align-items:center; gap:0.5rem;">
-            <span>📊 Live Tab:</span>
-            <select id="sheet-tab-select" class="btn">
+              <option value="Images">Images (SICF Manifests)</option>
+              <option value="Layers">Layers (SICF Sharded Chunks)</option>
               <option value="Repos">Repos</option>
               <option value="Issues">Issues</option>
               <option value="MergeRequests">MergeRequests</option>
               <option value="Files">Files</option>
               <option value="Releases">Releases</option>
-              <option value="Registry">Registry (Images Metadata)</option>
-              <option value="RegistryChunks">RegistryChunks (Cell Chunks)</option>
               <option value="Users">Users</option>
               <option value="Comments">Comments</option>
               <option value="Stars">Stars</option>
             </select>
           </div>
-          <span style="color:var(--text-muted); font-size:0.8rem;">Exact representation of the Google Sheet data plane</span>
+          <span style="color:var(--text-muted); font-size:0.8rem;">Exact representation of the Google Sheet data plane (SICF v0.1 compliant)</span>
         </div>
         <div class="card-body" style="overflow-x:auto;">
           <table class="sheet-table" id="sheet-grid-table"></table>
@@ -1030,28 +1028,58 @@
         { id: 'rel-001', repo: 'sncf/hello-web', tag_name: 'v1.0.0', name: 'v1.0.0: Initial Production Rollout', body: 'First stable release deployed to Sheeternetes cluster via Sheetlux CD.', author: 'prateeekbuilds', created_at: '2026-08-31T12:00:00Z', assets: 'app.json' },
         { id: 'rel-101', repo: 'sncf/sheeternetes-manifests', tag_name: 'v2.0.0', name: 'v2.0.0: High Availability Infra', body: 'Multi-node ingress and metrics monitoring configuration.', author: 'tym83', created_at: '2026-08-31T12:00:00Z', assets: 'production.json' }
       ],
-      Registry: [
+      Images: [
         {
           id: 'img-001',
           repo: 'sncf/hello-web',
-          name: 'traefik/whoami',
+          name: 'traefik/whoami:latest',
           tag: 'latest',
           digest: whoamiDigest,
+          config: 'eyJwbGF0Zm9ybSI6ImxpbnV4L2FtZDY0In0=',
+          layers: whoamiDigest,
+          size: 49152,
           size_bytes: 49152,
           chunk_count: 2,
           chunk_map: JSON.stringify([
-            { index: 0, sheet: 'RegistryChunks', cell: 'D2', chars: sampleChunk1.length, size_bytes: 24576, digest: whoamiDigest },
-            { index: 1, sheet: 'RegistryChunks', cell: 'D3', chars: sampleChunk2.length, size_bytes: 24576, digest: whoamiDigest }
+            { index: 0, sheet: 'Layers', cell: 'D2', chars: sampleChunk1.length, size_bytes: 24576, digest: whoamiDigest },
+            { index: 1, sheet: 'Layers', cell: 'D3', chars: sampleChunk2.length, size_bytes: 24576, digest: whoamiDigest }
           ]),
           author: 'prateeekbuilds',
+          created: '2026-08-31T12:00:00Z',
           created_at: '2026-08-31T12:00:00Z',
+          pushed_at: '2026-08-31T12:00:00Z',
+          updated_at: '2026-08-31T12:00:00Z'
+        },
+        {
+          id: 'img-101',
+          repo: 'sncf/sheeternetes-manifests',
+          name: 'ingress-router:v2.10',
+          tag: 'v2.10',
+          digest: ingressDigest,
+          config: 'eyJwbGF0Zm9ybSI6ImxpbnV4L2FtZDY0In0=',
+          layers: ingressDigest,
+          size: 24576,
+          size_bytes: 24576,
+          chunk_count: 1,
+          chunk_map: JSON.stringify([
+            { index: 0, sheet: 'Layers', cell: 'D4', chars: sampleChunk1.length, size_bytes: 24576, digest: ingressDigest }
+          ]),
+          author: 'tym83',
+          created: '2026-08-31T12:00:00Z',
+          created_at: '2026-08-31T12:00:00Z',
+          pushed_at: '2026-08-31T12:00:00Z',
           updated_at: '2026-08-31T12:00:00Z'
         }
       ],
-      RegistryChunks: [
-        { id: 'chk-001', digest: whoamiDigest, chunk_index: 0, chunk_data: sampleChunk1, size_bytes: 24576, created_at: '2026-08-31T12:00:00Z' },
-        { id: 'chk-002', digest: whoamiDigest, chunk_index: 1, chunk_data: sampleChunk2, size_bytes: 24576, created_at: '2026-08-31T12:00:00Z' }
+      Layers: [
+        { id: 'chk-001', digest: whoamiDigest, ordinal: 0, chunk_index: 0, media_type: 'application/vnd.oci.image.layer.v1.tar', data: sampleChunk1, chunk_data: sampleChunk1, size_bytes: 24576, created_at: '2026-08-31T12:00:00Z' },
+        { id: 'chk-002', digest: whoamiDigest, ordinal: 1, chunk_index: 1, media_type: 'application/vnd.oci.image.layer.v1.tar', data: sampleChunk2, chunk_data: sampleChunk2, size_bytes: 24576, created_at: '2026-08-31T12:00:00Z' },
+        { id: 'chk-101', digest: ingressDigest, ordinal: 0, chunk_index: 0, media_type: 'application/vnd.oci.image.layer.v1.tar', data: sampleChunk1, chunk_data: sampleChunk1, size_bytes: 24576, created_at: '2026-08-31T12:00:00Z' }
       ],
+      get Registry() { return this.Images; },
+      set Registry(v) { this.Images = v; },
+      get RegistryChunks() { return this.Layers; },
+      set RegistryChunks(v) { this.Layers = v; },
       Users: [
         { username: 'prateeekbuilds', name: 'Prateek', avatar_url: 'https://github.com/prateeekbuilds.png', role: 'Maintainer', bio: 'Spreadsheet engineer & forge builder' },
         { username: 'tym83', name: 'Timur', avatar_url: 'https://github.com/tym83.png', role: 'SNCF Chair', bio: 'Reconciling containers since cell A1' }
@@ -1071,13 +1099,13 @@
       const btn = document.getElementById('btn-sync-sheet');
       btn.textContent = 'Syncing…';
       try {
-        const kinds = ['repos', 'issues', 'mergerequests', 'files', 'releases', 'registry', 'registry_chunks', 'comments', 'stars', 'users'];
+        const kinds = ['repos', 'issues', 'mergerequests', 'files', 'releases', 'images', 'layers', 'comments', 'stars', 'users'];
         for (const k of kinds) {
           const res = await fetch(`?token=${encodeURIComponent(TOKEN)}&kind=${encodeURIComponent(k)}&repo=${encodeURIComponent(STATE.currentRepo)}`);
           if (res.ok) {
             const data = await res.json();
             if (data.items) {
-              const map = { repos:'Repos', issues:'Issues', mergerequests:'MergeRequests', files:'Files', releases:'Releases', registry:'Registry', registry_chunks:'RegistryChunks', comments:'Comments', stars:'Stars', users:'Users' };
+              const map = { repos:'Repos', issues:'Issues', mergerequests:'MergeRequests', files:'Files', releases:'Releases', images:'Images', layers:'Layers', comments:'Comments', stars:'Stars', users:'Users' };
               STATE[map[k]] = data.items;
             }
           }

