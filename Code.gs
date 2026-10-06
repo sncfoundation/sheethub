@@ -64,18 +64,46 @@ function readTab(name) {
   const s = ss();
   const norm = normalizeTabName(name);
   let sh = s.getSheetByName(norm);
+  let matchedName = norm;
   if (!sh && norm !== name) {
     sh = s.getSheetByName(name);
+    matchedName = name;
+  }
+  // Fallback for legacy spreadsheets that still only have Registry / RegistryChunks tabs
+  if (!sh) {
+    if (norm === 'Images' && s.getSheetByName('Registry')) {
+      sh = s.getSheetByName('Registry');
+      matchedName = 'Registry';
+    } else if (norm === 'Layers' && s.getSheetByName('RegistryChunks')) {
+      sh = s.getSheetByName('RegistryChunks');
+      matchedName = 'RegistryChunks';
+    }
   }
   if (!sh) return [];
   const rng = sh.getDataRange().getValues();
   if (rng.length < 2) return [];
   const header = rng.shift();
+  const sheetName = (sh.getName && typeof sh.getName === 'function') ? sh.getName() : matchedName;
+  const isLegacyRegistry = sheetName === 'Registry';
+  const isLegacyChunks = sheetName === 'RegistryChunks';
+
   return rng
     .filter(r => String(r[0]).trim() !== '')
     .map(row => {
       const o = {};
       header.forEach((h, i) => { o[h] = unescapeCell(row[i]); });
+      // Normalize legacy Registry rows to SICF Images schema if reading from legacy tab
+      if (isLegacyRegistry) {
+        if (!o.layers && o.digest) o.layers = o.digest;
+        if (o.size === undefined && o.size_bytes !== undefined) o.size = Number(o.size_bytes) || 0;
+        if (!o.created && o.created_at) o.created = o.created_at;
+        if (!o.pushed_at && (o.updated_at || o.created_at)) o.pushed_at = o.updated_at || o.created_at;
+        if (o.name && o.tag && !o.name.includes(':')) o.name = o.name + ':' + o.tag;
+      } else if (isLegacyChunks) {
+        if (o.ordinal === undefined && o.chunk_index !== undefined) o.ordinal = Number(o.chunk_index) || 0;
+        if (o.data === undefined && o.chunk_data !== undefined) o.data = o.chunk_data;
+        if (!o.media_type) o.media_type = 'application/vnd.oci.image.layer.v1.tar';
+      }
       return o;
     });
 }
@@ -127,25 +155,6 @@ function computeSha256(base64Str) {
   return 'sha256:' + hex;
 }
 
-function validateChunkMap(input, chunkCount, digest) {
-  if (!input) return null;
-  try {
-    const parsed = typeof input === 'string' ? JSON.parse(input) : input;
-    if (!Array.isArray(parsed) || parsed.length !== chunkCount) return null;
-    const sanitized = parsed.map((m, idx) => ({
-      index: Number(m.index !== undefined ? m.index : m.ordinal) || idx,
-      sheet: String(m.sheet || 'Layers').replace(/[^a-zA-Z0-9_-]/g, ''),
-      cell: String(m.cell || `D${idx + 2}`).replace(/[^a-zA-Z0-9]/g, ''),
-      chars: Number(m.chars) || 0,
-      size_bytes: Number(m.size_bytes) || 0,
-      digest: String(m.digest || digest)
-    }));
-    return JSON.stringify(sanitized);
-  } catch (e) {
-    return null;
-  }
-}
-
 // ---------- one-time setup & multi-repo seed data ----------
 function setupTab(name) {
   const s = ss();
@@ -158,6 +167,26 @@ function setupTab(name) {
 }
 
 function setup() {
+  const s = ss();
+  // Auto-migrate legacy Registry / RegistryChunks tabs to Images / Layers if present
+  const legacyRegistry = s.getSheetByName('Registry');
+  const legacyChunks = s.getSheetByName('RegistryChunks');
+  const imagesSheet = s.getSheetByName('Images');
+  const layersSheet = s.getSheetByName('Layers');
+
+  if (legacyRegistry && (!imagesSheet || imagesSheet.getLastRow() < 2)) {
+    const oldRegistryRows = readTab('Registry');
+    if (oldRegistryRows.length > 0) {
+      writeTab('Images', oldRegistryRows);
+    }
+  }
+  if (legacyChunks && (!layersSheet || layersSheet.getLastRow() < 2)) {
+    const oldChunkRows = readTab('RegistryChunks');
+    if (oldChunkRows.length > 0) {
+      writeTab('Layers', oldChunkRows);
+    }
+  }
+
   ['Repos', 'Issues', 'MergeRequests', 'Releases', 'Users', 'Comments', 'Stars', 'Files', 'Images', 'Layers'].forEach(name => {
     setupTab(name);
   });
@@ -393,6 +422,25 @@ function setup() {
     ]);
   }
 
+  // Migrate legacy Registry / RegistryChunks tabs to Images / Layers if present
+  const legacyRegSheet = s.getSheetByName('Registry');
+  const legacyChunksSheet = s.getSheetByName('RegistryChunks');
+  const hasImagesSheet = !!s.getSheetByName('Images');
+  const hasLayersSheet = !!s.getSheetByName('Layers');
+
+  if (legacyRegSheet && !hasImagesSheet) {
+    const legacyRegRows = readTab('Images');
+    if (legacyRegRows.length) {
+      writeTab('Images', legacyRegRows);
+    }
+  }
+  if (legacyChunksSheet && !hasLayersSheet) {
+    const legacyChunkRows = readTab('Layers');
+    if (legacyChunkRows.length) {
+      writeTab('Layers', legacyChunkRows);
+    }
+  }
+
   // Seed Container Registry (SICF v0.1: Images & Layers tabs)
   const images = readTab('Images');
   if (!images.length) {
@@ -601,7 +649,10 @@ function doGet(e) {
       layers: resolvedLayers,
       chunks: allMatchingChunks.map((c, i) => ({
         ...c,
-        chunk_index: c.ordinal !== undefined ? c.ordinal : (c.chunk_index !== undefined ? c.chunk_index : i),
+        layer_digest: c.digest,
+        ordinal: Number(c.ordinal !== undefined ? c.ordinal : (c.chunk_index !== undefined ? c.chunk_index : 0)),
+        chunk_index: i,
+        data: c.data !== undefined ? c.data : c.chunk_data,
         chunk_data: c.data !== undefined ? c.data : c.chunk_data
       }))
     });
@@ -842,7 +893,7 @@ function doPost(e) {
         if (layerInput.digest && String(layerInput.digest).trim().toLowerCase() !== computedLayerDigest.toLowerCase()) {
           return json({ error: `digest mismatch: computed ${computedLayerDigest} but received ${layerInput.digest}` });
         }
-        if (inputLayers.length === 1 && body.digest && String(body.digest).trim().toLowerCase() !== computedLayerDigest.toLowerCase() && !body.config) {
+        if (inputLayers.length === 1 && body.digest && String(body.digest).trim().toLowerCase() !== computedLayerDigest.toLowerCase() && !body.config && !body.digest.startsWith('sha256:')) {
           return json({ error: `digest mismatch: computed ${computedLayerDigest} but received ${body.digest}` });
         }
 
@@ -921,9 +972,9 @@ function doPost(e) {
         configDigest = computeSha256(configB64);
       }
 
-      // If single layer and client specified expected digest for the image, verify config digest or layer digest
-      if (body.config && body.digest && String(body.digest).trim().toLowerCase() !== configDigest.toLowerCase()) {
-        return json({ error: `digest mismatch: computed ${configDigest} but received ${body.digest}` });
+      // If client specified expected digest for the image, verify config digest or single-layer digest
+      if (body.digest && String(body.digest).trim().toLowerCase() !== configDigest.toLowerCase() && (inputLayers.length !== 1 || String(body.digest).trim().toLowerCase() !== layerDigestList[0].toLowerCase())) {
+        return json({ error: `digest mismatch: computed config digest ${configDigest} but received ${body.digest}` });
       }
 
       // Write newly added layer rows to Layers tab
@@ -937,7 +988,7 @@ function doPost(e) {
 
       // 3. Upsert into Images tab
       const images = readTab('Images');
-      const fullName = `${name}:${tag}`;
+      const fullName = name.includes(':') ? name : `${name}:${tag}`;
       let imageRecord = images.find(r => r.repo === repo && (r.name === name || r.name === fullName) && (r.tag === tag || !r.tag));
 
       // Clean up orphaned layers if updating an existing image tag and old layers are no longer in use
@@ -957,27 +1008,14 @@ function doPost(e) {
       }
 
       const layersStr = layerDigestList.join(',');
-      const chunkMap = [];
-      newLayerRows.forEach((r, idx) => {
-        chunkMap.push({
-          index: r.ordinal,
-          sheet: 'Layers',
-          cell: `D${idx + 2}`,
-          chars: r.data ? r.data.length : 0,
-          size_bytes: r.size_bytes,
-          digest: r.digest
-        });
-      });
-      const validatedMap = validateChunkMap(body.chunk_map, totalChunkCount, layerDigestList[0]) || JSON.stringify(chunkMap);
 
+      // Per SICF spec: image.digest is ALWAYS the config digest (the image's content identity)
       if (imageRecord) {
         imageRecord.name = fullName;
-        imageRecord.digest = (inputLayers.length === 1 && !body.config) ? layerDigestList[0] : configDigest;
+        imageRecord.digest = configDigest;
         imageRecord.config = configB64;
         imageRecord.layers = layersStr;
         imageRecord.size = totalSize;
-        imageRecord.chunk_count = totalChunkCount;
-        imageRecord.chunk_map = validatedMap;
         imageRecord.repo = repo;
         imageRecord.tag = tag;
         imageRecord.author = author;
@@ -986,13 +1024,11 @@ function doPost(e) {
       } else {
         imageRecord = {
           name: fullName,
-          digest: (inputLayers.length === 1 && !body.config) ? layerDigestList[0] : configDigest,
+          digest: configDigest,
           config: configB64,
           layers: layersStr,
           created: now,
           size: totalSize,
-          chunk_count: totalChunkCount,
-          chunk_map: validatedMap,
           repo: repo,
           tag: tag,
           author: author,
@@ -1007,7 +1043,7 @@ function doPost(e) {
       return json({
         ok: true,
         image: imageRecord,
-        digest: imageRecord.digest,
+        digest: configDigest,
         config_digest: configDigest,
         layers: layerDigestList,
         chunk_count: totalChunkCount
@@ -1099,7 +1135,10 @@ function doPost(e) {
         layers: resolvedLayers,
         chunks: allMatchingChunks.map((c, i) => ({
           ...c,
-          chunk_index: c.ordinal !== undefined ? c.ordinal : (c.chunk_index !== undefined ? c.chunk_index : i),
+          layer_digest: c.digest,
+          ordinal: Number(c.ordinal !== undefined ? c.ordinal : (c.chunk_index !== undefined ? c.chunk_index : 0)),
+          chunk_index: i,
+          data: c.data !== undefined ? c.data : c.chunk_data,
           chunk_data: c.data !== undefined ? c.data : c.chunk_data
         }))
       });

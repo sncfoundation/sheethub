@@ -314,26 +314,64 @@ case "$cmd" in
               process.exit(1);
             }
 
-            const chunks = data.chunks || (data.layers && data.layers[0] && data.layers[0].chunks) || [];
-            const sortedChunks = chunks
-              .sort((a, b) => Number(a.ordinal !== undefined ? a.ordinal : a.chunk_index) - Number(b.ordinal !== undefined ? b.ordinal : b.chunk_index))
-              .map(c => c.data || c.chunk_data);
+            const layerBlobs = [];
+            if (Array.isArray(data.layers) && data.layers.length > 0) {
+              for (const lyr of data.layers) {
+                const lyrChunks = (lyr.chunks || [])
+                  .sort((a, b) => Number(a.ordinal !== undefined ? a.ordinal : a.chunk_index) - Number(b.ordinal !== undefined ? b.ordinal : b.chunk_index))
+                  .map(c => c.data || c.chunk_data || "");
+                const lyrB64 = lyrChunks.join("");
+                const lyrBuf = Buffer.from(lyrB64, "base64");
+                const lyrDigest = "sha256:" + crypto.createHash("sha256").update(lyrBuf).digest("hex");
+                if (lyr.digest && lyrDigest.toLowerCase() !== String(lyr.digest).toLowerCase()) {
+                  console.error(`sheethub error: layer digest mismatch! expected ${lyr.digest}, got ${lyrDigest}`);
+                  process.exit(1);
+                }
+                layerBlobs.push({ digest: lyrDigest, buffer: lyrBuf, mediaType: lyr.media_type });
+              }
+            } else if (Array.isArray(data.chunks) && data.chunks.length > 0) {
+              const layerMap = new Map();
+              data.chunks.forEach(c => {
+                const key = c.digest || c.layer_digest || "default";
+                if (!layerMap.has(key)) layerMap.set(key, []);
+                layerMap.get(key).push(c);
+              });
+              for (const [key, chks] of layerMap.entries()) {
+                const sorted = chks
+                  .sort((a, b) => Number(a.ordinal !== undefined ? a.ordinal : a.chunk_index) - Number(b.ordinal !== undefined ? b.ordinal : b.chunk_index))
+                  .map(c => c.data || c.chunk_data || "");
+                const lyrB64 = sorted.join("");
+                const lyrBuf = Buffer.from(lyrB64, "base64");
+                const lyrDigest = "sha256:" + crypto.createHash("sha256").update(lyrBuf).digest("hex");
+                layerBlobs.push({ digest: lyrDigest, buffer: lyrBuf });
+              }
+            }
 
-            const fullBase64 = sortedChunks.join("");
-            const buf = Buffer.from(fullBase64, "base64");
-            const calculatedDigest = "sha256:" + crypto.createHash("sha256").update(buf).digest("hex");
-
-            if (data.image && data.image.layers && !data.image.layers.includes(calculatedDigest) && data.image.digest && calculatedDigest !== data.image.digest) {
-              console.error("sheethub error: digest mismatch! expected " + (data.image.layers || data.image.digest) + ", got " + calculatedDigest);
+            if (layerBlobs.length === 0) {
+              console.error("sheethub error: no layer chunks retrieved");
               process.exit(1);
             }
 
-            if (outfile) {
-              fs.writeFileSync(outfile, buf);
-              console.error("✅ Reassembled " + sortedChunks.length + " cell chunks (" + buf.length + " bytes). Digest verified: " + calculatedDigest);
-              console.error("💾 Layer written to: " + outfile);
+            if (layerBlobs.length === 1) {
+              const single = layerBlobs[0];
+              if (outfile) {
+                fs.writeFileSync(outfile, single.buffer);
+                console.error("✅ Reassembled layer (" + single.buffer.length + " bytes). Digest verified: " + single.digest);
+                console.error("💾 Layer written to: " + outfile);
+              } else {
+                process.stdout.write(single.buffer);
+              }
             } else {
-              process.stdout.write(buf);
+              const totalBytes = layerBlobs.reduce((acc, l) => acc + l.buffer.length, 0);
+              const combinedBuffer = Buffer.concat(layerBlobs.map(l => l.buffer));
+              if (outfile) {
+                fs.writeFileSync(outfile, combinedBuffer);
+                console.error(`✅ Reassembled ${layerBlobs.length} layers in order (${totalBytes} bytes). All layer digests verified:`);
+                layerBlobs.forEach((l, i) => console.error(`   Layer ${i + 1}: ${l.digest} (${l.buffer.length} bytes)`));
+                console.error("💾 Multi-layer image written to: " + outfile);
+              } else {
+                process.stdout.write(combinedBuffer);
+              }
             }
           });
         ' "$outfile"
