@@ -145,10 +145,13 @@ Commands:
 # Push container layer / tarball (auto-shards base64 into spreadsheet cells)
 ./sheethub registry push sncf/hello-web my-service:v1.0.0 ./layer.tar
 
-# Pull and reassemble container image layer from spreadsheet cells (verifies SHA-256 digest)
+# Pull and reassemble a single-layer image from spreadsheet cells (verifies SHA-256 digest)
 ./sheethub registry pull sncf/hello-web my-service:v1.0.0 ./pulled_layer.tar
 
-# Inspect cell shard map coordinates
+# Pull a multi-layer image into an OCI image layout directory (every blob verified)
+./sheethub registry pull sncf/hello-web my-app:v2 ./my-app-oci/
+
+# Inspect the image record (config digest, layer digests)
 ./sheethub registry view sncf/hello-web my-service:v1.0.0
 
 # Delete container image and associated cell chunks
