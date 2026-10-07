@@ -69,14 +69,14 @@ function readTab(name) {
     sh = s.getSheetByName(name);
     matchedName = name;
   }
-  // Fallback for legacy spreadsheets that still only have Registry / RegistryChunks tabs
-  if (!sh) {
-    if (norm === 'Images' && s.getSheetByName('Registry')) {
-      sh = s.getSheetByName('Registry');
-      matchedName = 'Registry';
-    } else if (norm === 'Layers' && s.getSheetByName('RegistryChunks')) {
-      sh = s.getSheetByName('RegistryChunks');
-      matchedName = 'RegistryChunks';
+  // Fall back to the legacy Registry / RegistryChunks tabs when the SICF tab is
+  // missing or holds no data rows yet (e.g. created empty before setup() migrated).
+  const legacyName = norm === 'Images' ? 'Registry' : (norm === 'Layers' ? 'RegistryChunks' : null);
+  if (legacyName && (!sh || sh.getLastRow() < 2)) {
+    const legacy = s.getSheetByName(legacyName);
+    if (legacy && legacy.getLastRow() >= 2) {
+      sh = legacy;
+      matchedName = legacyName;
     }
   }
   if (!sh) return [];
@@ -420,25 +420,6 @@ function setup() {
       { repo: 'sncf/hello-web', username: 'tym83', starred_at: now },
       { repo: 'sncf/sheeternetes-manifests', username: 'prateeekbuilds', starred_at: now },
     ]);
-  }
-
-  // Migrate legacy Registry / RegistryChunks tabs to Images / Layers if present
-  const legacyRegSheet = s.getSheetByName('Registry');
-  const legacyChunksSheet = s.getSheetByName('RegistryChunks');
-  const hasImagesSheet = !!s.getSheetByName('Images');
-  const hasLayersSheet = !!s.getSheetByName('Layers');
-
-  if (legacyRegSheet && !hasImagesSheet) {
-    const legacyRegRows = readTab('Images');
-    if (legacyRegRows.length) {
-      writeTab('Images', legacyRegRows);
-    }
-  }
-  if (legacyChunksSheet && !hasLayersSheet) {
-    const legacyChunkRows = readTab('Layers');
-    if (legacyChunkRows.length) {
-      writeTab('Layers', legacyChunkRows);
-    }
   }
 
   // Seed Container Registry (SICF v0.1: Images & Layers tabs)

@@ -659,6 +659,33 @@ legacyApi.setup();
 check('setup() created Images tab on legacy sheet', !!legacyStore['Images'] && legacyStore['Images'].grid.length >= 2, legacyStore['Images']?.grid);
 check('setup() created Layers tab on legacy sheet', !!legacyStore['Layers'] && legacyStore['Layers'].grid.length >= 2, legacyStore['Layers']?.grid);
 
+console.log('\n== N2: Legacy data with an EMPTY Images/Layers tab already present ==');
+const emptyTabStore = {
+  Registry: makeSheet(['id', 'repo', 'name', 'tag', 'digest', 'size_bytes', 'chunk_count', 'chunk_map', 'author', 'created_at', 'updated_at']),
+  RegistryChunks: makeSheet(['id', 'digest', 'chunk_index', 'chunk_data', 'size_bytes', 'created_at']),
+  Images: makeSheet(['name', 'digest', 'config', 'layers', 'created', 'size', 'repo', 'tag', 'author', 'pushed_at', 'id', 'updated_at']),
+  Layers: makeSheet(['digest', 'ordinal', 'media_type', 'data', 'size_bytes', 'id', 'created_at'])
+};
+emptyTabStore.Registry.grid.push(['img-legacy-2', 'sncf/legacy-repo', 'early-app', 'v0.9', testLayerDigest, 12, 2, '[]', 'bob', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z']);
+emptyTabStore.RegistryChunks.grid.push(['chk-e-1', testLayerDigest, 0, 'SGVsbG8g', 6, '2026-08-01T00:00:00Z']);
+const emptyTabApi = new Function(
+  'SpreadsheetApp', 'Utilities', 'LockService', 'ContentService', 'HtmlService',
+  codeText + '\nreturn { setup, readTab, writeTab, doGet, doPost };'
+)({
+  getActiveSpreadsheet: () => ({
+    getId: () => 'empty-tab-sheethub',
+    getSheetByName: (n) => (emptyTabStore[n] ? api2(emptyTabStore[n], n) : null),
+    insertSheet: (n) => { emptyTabStore[n] = emptyTabStore[n] || makeSheet([]); return api2(emptyTabStore[n], n); }
+  })
+}, Utilities, LockService, ContentService, HtmlService);
+check('readTab(Images) falls back to Registry while Images has no data rows',
+  emptyTabApi.readTab('Images').some(i => i.name === 'early-app:v0.9'));
+emptyTabApi.setup();
+check('setup() migrates legacy rows into a pre-existing empty Images tab',
+  emptyTabStore.Images.grid.some(r => r.includes('early-app:v0.9')), emptyTabStore.Images.grid);
+check('setup() migrates legacy chunks into a pre-existing empty Layers tab',
+  emptyTabStore.Layers.grid.some(r => r.includes('SGVsbG8g')), emptyTabStore.Layers.grid);
+
 console.log('\n== O: Image Digest Semantics (Review Item 3) ==');
 // Push a single-layer image without client config
 const singleLayerPayload = Buffer.from('Single layer for digest semantics verification', 'utf8');
