@@ -21,7 +21,7 @@
 #   sheethub release list <repo>
 #   sheethub registry list [repo]
 #   sheethub registry push <repo> <name:tag> <local_file_or_image_tar>
-#   sheethub registry pull <repo> <name:tag_or_digest> [output_file]
+#   sheethub registry pull <repo> <name:tag_or_digest> [output_file_or_dir]
 #   sheethub registry view <repo> <name:tag_or_digest>
 #   sheethub registry delete <repo> <name:tag_or_digest>
 #   sheethub tour
@@ -273,7 +273,7 @@ case "$cmd" in
         echo "✅ SICF Image $name:$tag successfully pushed and sharded into cells!"
         ;;
       pull)
-        repo="${1:?usage: sheethub registry pull <repo> <name:tag_or_digest> [output_file]}"
+        repo="${1:?usage: sheethub registry pull <repo> <name:tag_or_digest> [output_file_or_dir]}"
         img_spec="${2:?missing image name:tag or digest}"
         outfile="${3:-}"
 
@@ -362,16 +362,52 @@ case "$cmd" in
                 process.stdout.write(single.buffer);
               }
             } else {
-              const totalBytes = layerBlobs.reduce((acc, l) => acc + l.buffer.length, 0);
-              const combinedBuffer = Buffer.concat(layerBlobs.map(l => l.buffer));
-              if (outfile) {
-                fs.writeFileSync(outfile, combinedBuffer);
-                console.error(`✅ Reassembled ${layerBlobs.length} layers in order (${totalBytes} bytes). All layer digests verified:`);
-                layerBlobs.forEach((l, i) => console.error(`   Layer ${i + 1}: ${l.digest} (${l.buffer.length} bytes)`));
-                console.error("💾 Multi-layer image written to: " + outfile);
-              } else {
-                process.stdout.write(combinedBuffer);
+              // A multi-layer image is written as an OCI image layout directory
+              // (oci-layout, index.json, blobs/sha256/*), so it can be loaded by
+              // standard tooling instead of being a concatenation of layer tars.
+              if (!outfile) {
+                console.error("sheethub error: multi-layer image (" + layerBlobs.length + " layers); pass an output directory to write an OCI image layout");
+                process.exit(1);
               }
+              const path = require("path");
+              const blobDir = path.join(outfile, "blobs", "sha256");
+              fs.mkdirSync(blobDir, { recursive: true });
+              const writeBlob = (buf) => {
+                const hex = crypto.createHash("sha256").update(buf).digest("hex");
+                fs.writeFileSync(path.join(blobDir, hex), buf);
+                return { digest: "sha256:" + hex, size: buf.length };
+              };
+              const configJson = data.image && data.image.config
+                ? Buffer.from(String(data.image.config), "base64")
+                : Buffer.from(JSON.stringify({ architecture: "amd64", os: "linux", rootfs: { type: "layers", diff_ids: layerBlobs.map(l => l.digest) } }));
+              const configDesc = writeBlob(configJson);
+              const manifest = {
+                schemaVersion: 2,
+                mediaType: "application/vnd.oci.image.manifest.v1+json",
+                config: { mediaType: "application/vnd.oci.image.config.v1+json", digest: configDesc.digest, size: configDesc.size },
+                layers: layerBlobs.map(l => {
+                  const d = writeBlob(l.buffer);
+                  return { mediaType: l.mediaType || "application/vnd.oci.image.layer.v1.tar", digest: d.digest, size: d.size };
+                })
+              };
+              const manifestDesc = writeBlob(Buffer.from(JSON.stringify(manifest)));
+              const refName = (data.image && data.image.tag) || "latest";
+              const index = {
+                schemaVersion: 2,
+                mediaType: "application/vnd.oci.image.index.v1+json",
+                manifests: [{
+                  mediaType: "application/vnd.oci.image.manifest.v1+json",
+                  digest: manifestDesc.digest,
+                  size: manifestDesc.size,
+                  annotations: { "org.opencontainers.image.ref.name": refName }
+                }]
+              };
+              fs.writeFileSync(path.join(outfile, "index.json"), JSON.stringify(index));
+              fs.writeFileSync(path.join(outfile, "oci-layout"), JSON.stringify({ imageLayoutVersion: "1.0.0" }));
+              const totalBytes = layerBlobs.reduce((acc, l) => acc + l.buffer.length, 0);
+              console.error(`✅ Reassembled ${layerBlobs.length} layers in order (${totalBytes} bytes). All layer digests verified:`);
+              layerBlobs.forEach((l, i) => console.error(`   Layer ${i + 1}: ${l.digest} (${l.buffer.length} bytes)`));
+              console.error("💾 OCI image layout written to: " + outfile);
             }
           });
         ' "$outfile"
