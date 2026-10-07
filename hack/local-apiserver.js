@@ -66,17 +66,21 @@ const store = {
   Comments:       makeSheet(['id', 'target_type', 'target_id', 'author', 'body', 'created_at']),
   Stars:          makeSheet(['repo', 'username', 'starred_at']),
   Files:          makeSheet(['repo', 'path', 'branch', 'content', 'updated_at']),
-  Registry:       makeSheet(['id', 'repo', 'name', 'tag', 'digest', 'size_bytes', 'chunk_count', 'chunk_map', 'author', 'created_at', 'updated_at']),
-  RegistryChunks: makeSheet(['id', 'digest', 'chunk_index', 'chunk_data', 'size_bytes', 'created_at']),
+  Images:         makeSheet(['name', 'digest', 'config', 'layers', 'created', 'size', 'repo', 'tag', 'author', 'pushed_at', 'id', 'updated_at']),
+  Layers:         makeSheet(['digest', 'ordinal', 'media_type', 'data', 'size_bytes', 'id', 'created_at']),
 };
 
 const SpreadsheetApp = {
   getActiveSpreadsheet: () => ({
     getId: () => 'local-sheethub',
-    getSheetByName: (n) => (store[n] ? makeSheetApi(store[n]) : null),
+    getSheetByName: (n) => {
+      const norm = (n === 'Registry' || n === 'images') ? 'Images' : ((n === 'RegistryChunks' || n === 'layers') ? 'Layers' : n);
+      return store[norm] ? makeSheetApi(store[norm]) : (store[n] ? makeSheetApi(store[n]) : null);
+    },
     insertSheet: (n) => {
-      store[n] = store[n] || makeSheet([]);
-      return makeSheetApi(store[n]);
+      const norm = (n === 'Registry' || n === 'images') ? 'Images' : ((n === 'RegistryChunks' || n === 'layers') ? 'Layers' : n);
+      store[norm] = store[norm] || makeSheet([]);
+      return makeSheetApi(store[norm]);
     },
   })
 };
@@ -87,6 +91,10 @@ const Utilities = {
   getUuid: () => (++uuidN).toString(36).split('').reverse().join('').padEnd(8, '0'),
   DigestAlgorithm: { SHA_256: 'SHA_256' },
   base64Decode: (str) => Array.from(Buffer.from(str, 'base64')),
+  base64Encode: (bytes) => Buffer.from(bytes).toString('base64'),
+  newBlob: (strOrBytes) => ({
+    getBytes: () => Array.from(Buffer.isBuffer(strOrBytes) ? strOrBytes : Buffer.from(String(strOrBytes), 'utf8'))
+  }),
   computeDigest: (algo, bytes) => {
     const buf = Buffer.from(bytes);
     const hashBuf = crypto.createHash('sha256').update(buf).digest();

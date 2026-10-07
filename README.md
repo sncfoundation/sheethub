@@ -55,8 +55,8 @@ SheetHub hosts the workload manifests that [Sheeternetes](https://github.com/snc
 | **`Issues`** | `id, repo, number, title, body, author, state, labels, created_at, updated_at` | Sequential issue tracker per repo |
 | **`MergeRequests`** | `id, repo, number, title, description, author, source_branch, target_branch, state, diff_manifest, created_at, updated_at` | Merge requests with visual spec diffs |
 | **`Releases`** | `id, repo, tag_name, name, body, author, created_at, assets` | Release tags & artifact manifest registry |
-| **`Registry`** | `id, repo, name, tag, digest, size_bytes, chunk_count, chunk_map, author, created_at, updated_at` | Container image metadata, tags, SHA-256 digests & shard map |
-| **`RegistryChunks`** | `id, digest, chunk_index, chunk_data, size_bytes, created_at` | Base64 image layer chunks stored across cell ranges ($\le$ 32,767 chars/cell) |
+| **`Images`** | `name, digest, config, layers, created, size, repo, tag, author, pushed_at` | **SICF v0.1 Image Manifests**: OCI config digest + ordered layer digests + forge metadata |
+| **`Layers`** | `digest, ordinal, media_type, data, size_bytes, id, created_at` | **SICF v0.1 Image Layers**: Content-addressed base64 layer chunks ($\le$ 32,767 chars/cell) |
 | **`Users`** | `username, name, avatar_url, role, bio, created_at` | Contributor identity & profiles |
 | **`Comments`** | `id, target_type, target_id, author, body, created_at` | Discussions on issues and MRs |
 | **`Stars`** | `repo, username, starred_at` | Star registry |
@@ -64,11 +64,14 @@ SheetHub hosts the workload manifests that [Sheeternetes](https://github.com/snc
 
 ---
 
-## Container Registry in Cells (Air-Gap Edition)
+## SICF v0.1 Container Registry in Cells (Air-Gap Edition)
 
-SheetHub includes a spreadsheet-native **container registry** that stores OCI container image layers directly in spreadsheet cells:
-- **Cell Character Limit Sharding**: Excel and Google Sheets cap a single cell at **32,767 characters**. Image layers are converted to Base64 and automatically sharded across discrete cell ranges (capped at $\le 30,000$ characters per cell) and reassembled on pull.
-- **Separate Metadata Plane**: Image names, tags, SHA-256 digests, and cell coordinate chunk maps (`RegistryChunks!D2:D15`) are tracked cleanly in the `Registry` tab.
+SheetHub implements the **SICF (Sheet-Native Image Container Format v0.1)** specification:
+- **OCI-Style Image Model**: Container images are modeled as an image config JSON (`digest`, `config` in base64) plus an ordered list of layer SHA-256 digests (`layers`).
+- **Content-Addressed Layer Deduplication**: Layers in the `Layers` tab are content-addressed by their SHA-256 digest. Multiple images sharing common base layers (e.g. Alpine base) reuse the exact same layer rows in the spreadsheet without duplication.
+- **Cell Character Limit Sharding**: Excel and Google Sheets cap a single cell at **32,767 characters**. Image layers are converted to Base64 and sharded across cell rows with `ordinal` ordering and media types (`application/vnd.oci.image.layer.v1.tar`).
+- **Round-Trip with `sheetbuild`**: Images pushed to SheetHub can be directly imported and exported by `sheetbuild.py`, yielding digest-identical OCI container tarballs.
+- **Sheeternetes Kubelet Resolution (`sicf:<name>`)**: Node agents in Sheeternetes clusters pull images directly from the spreadsheet control plane using `sicf:<image-name>` or `sicf:<repo>/<name>`.
 - **Air-Gap Self-Hosting**: Both workload manifests *and* container images reside completely within the Google Sheet.
 
 ---
